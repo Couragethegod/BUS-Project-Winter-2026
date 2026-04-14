@@ -9,11 +9,11 @@ pca = PCA9685(i2c)
 pca.frequency = 50  # Standard servo frequency
 
 # Servo channels (0, 1, 2)
-servo_channels = [0, 1, 2]
+servo_channels = [0]
 
 # Store angles
-servo_angles = [90, 90, 90]
-offsets = [0, 0, 0]
+servo_angles = [90]
+offsets = [0]
 
 # Pulse range (adjust if needed)
 SERVO_MIN = 150  # Min pulse
