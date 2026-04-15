@@ -14,8 +14,8 @@ pca.frequency = 50
 # Servo configuration
 # ----------------------------
 SERVO_CHANNELS = [0, 1, 2]
-SERVO_MIN = 150
-SERVO_MAX = 600
+SERVO_MIN = 0
+SERVO_MAX = 360
 MAX_ANGLE = 90
 SAFE_MARGIN = 0
 
