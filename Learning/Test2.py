@@ -13,10 +13,10 @@ pca.frequency = 50
 # ----------------------------
 # SAFE LIMITS (tune if needed)
 # ----------------------------
-SERVO_MIN = 320
-SERVO_MAX = 420
+SERVO_MIN = 0
+SERVO_MAX = 360
 MAX_ANGLE = 90
-SAFE_MARGIN = 5
+SAFE_MARGIN = 0
 
 # ----------------------------
 # Software position tracking

@@ -23,8 +23,8 @@ class BBrobot:
     
         # Initialize 3 servo motors
         self.s1 = cs.RS304MD(ids[0])
-        self.s2 = cs.RS304MD(ids[1])
-        self.s3 = cs.RS304MD(ids[2])
+        self.s2 = cs.RS304MD(ids[7])
+        self.s3 = cs.RS304MD(ids[8])
         
         # Robot geometry (IMPORTANT)
         # These are link lengths (in meters)

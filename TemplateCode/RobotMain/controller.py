@@ -43,8 +43,8 @@ class RobotController:
         # Assign servos to specific channels
         # 🔧 CHANGE THESE if wiring is different
         self.s1 = self.Controller.servo[0]
-        self.s2 = self.Controller.servo[15]
-        self.s3 = self.Controller.servo[14]
+        self.s2 = self.Controller.servo[1]
+        self.s3 = self.Controller.servo[2]
 
         # Configure servo properties
         for s in (self.s1, self.s2, self.s3):
