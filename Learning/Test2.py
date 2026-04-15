@@ -11,7 +11,7 @@ pca = PCA9685(i2c)
 pca.frequency = 50
 
 # ----------------------------
-# SAFE LIMITS (MG996R)
+# SAFE LIMITS (tune if needed)
 # ----------------------------
 SERVO_MIN = 320
 SERVO_MAX = 420
@@ -19,36 +19,37 @@ MAX_ANGLE = 90
 SAFE_MARGIN = 5
 
 # ----------------------------
-# Position tracking
+# Software position tracking
+# (NO physical movement on startup)
 # ----------------------------
-current_angle = 45  # safe startup middle position
+current_angle = 45  # only a software assumption
 
 # ----------------------------
-# Convert angle to PWM
+# Convert angle → PWM
 # ----------------------------
 def angle_to_pwm(angle):
     return int(SERVO_MIN + (angle / MAX_ANGLE) * (SERVO_MAX - SERVO_MIN))
 
 # ----------------------------
-# LOW-LEVEL move (absolute)
+# Absolute movement
 # ----------------------------
-def move_absolute(angle):
+def move_absolute(target):
     global current_angle
 
     # safety clamp
-    angle = max(SAFE_MARGIN, min(angle, MAX_ANGLE - SAFE_MARGIN))
+    target = max(SAFE_MARGIN, min(target, MAX_ANGLE - SAFE_MARGIN))
 
-    step = 1 if angle > current_angle else -1
+    step = 1 if target > current_angle else -1
 
-    for a in range(current_angle, angle, step):
+    for a in range(current_angle, target, step):
         pca.channels[0].duty_cycle = angle_to_pwm(a) << 4
         time.sleep(0.02)
 
-    current_angle = angle
+    current_angle = target
     print(f"[ABS] Moved to {current_angle}°")
 
 # ----------------------------
-# HIGH-LEVEL move (relative)
+# Relative movement
 # ----------------------------
 def move_relative(delta):
     target = current_angle + delta
@@ -56,17 +57,16 @@ def move_relative(delta):
     print(f"[REL] Moved by {delta}°")
 
 # ----------------------------
-# Main loop
+# Main loop (NO startup motion)
 # ----------------------------
 try:
-    print("Hybrid servo control ready")
-    move_absolute(45)  # safe startup position
-    time.sleep(0.5)
+    print("Servo controller ready (absolute + relative)")
+    print("No automatic movement on startup")
 
     while True:
         cmd = input("Enter (a=absolute, r=relative, q=quit): ")
 
-        if cmd == "q":
+        if cmd.lower() == "q":
             break
 
         try:
@@ -78,11 +78,12 @@ try:
             elif mode == "r":
                 move_relative(value)
             else:
-                print("Use: a 30 or r 5")
+                print("Use: a 30 OR r 5")
         except:
-            print("Format: a 30 (absolute) OR r 5 (relative)")
+            print("Format: a 30 OR r 5")
 
 finally:
+    # stop PWM output
     pca.channels[0].duty_cycle = 0
     pca.deinit()
     print("Cleaned up")
