@@ -18,11 +18,12 @@ servo_angles = [90]
 offsets = [0]
 
 # Pulse range (adjust if needed)
-SERVO_MIN = 150
-SERVO_MAX = 600
+SERVO_MIN = 260
+SERVO_MAX = 480
+MAX_ANGLE = 120
 
 def angle_to_pwm(angle):
-    return int(SERVO_MIN + (angle / 180.0) * (SERVO_MAX - SERVO_MIN))
+    return int(SERVO_MIN + (angle / MAX_ANGLE) * (SERVO_MAX - SERVO_MIN))
 
 
 # 🛑 IMPORTANT: disable all servo outputs at startup
@@ -36,7 +37,7 @@ disable_all_servos()
 def set_servo(index, relative_angle):
     absolute_angle = offsets[index] + relative_angle
 
-    if 0 <= absolute_angle <= 180:
+    if 0 <= absolute_angle <= MAX_ANGLE:
         pwm_value = angle_to_pwm(absolute_angle)
 
         # ✅ Only NOW we send signal to servo
@@ -48,6 +49,8 @@ def set_servo(index, relative_angle):
     else:
         print("⚠️ Angle out of range (0–180 after offset)")
 
+    if abs(absolute_angle - servo_angles[index]) < 2:
+        return
 
 def calibrate_zero():
     global offsets
