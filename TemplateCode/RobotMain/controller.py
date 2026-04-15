@@ -72,12 +72,12 @@ class RobotController:
 
         time.sleep(1)"""
 
-        # Move ALL servos to safe minimum (45°)
+        """# Move ALL servos to safe minimum (45°)
         self.set_motor_angles(45, 45, 45)
-        time.sleep(1)
+        time.sleep(1)"""
 
-        # Move to neutral upright posture
-        #self.Goto_time_spherical(0, 0, 8.26, t=0.25)
+        #Move to neutral upright posture
+        self.Goto_time_spherical(40, 40, 40, t=0.25)
 
         time.sleep(1)
 
