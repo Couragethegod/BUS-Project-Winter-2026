@@ -121,14 +121,19 @@ def process():
 
         # === TARGET POSITION ===
         # You want the ball centered
-        x_t, y_t = (100, 75)
+        
+        #x_t, y_t = (100, 75)
+
+        h, w = frame_copy.shape[:2]
+        x_t, y_t = (w // 2, h // 2)
 
         # === CONTROL STEP ===
         update_robot_pos(robot, model, PID, x_t, y_t, x, y)
 
         # Optional visualization (slow → affects performance)
         # cam.display_draw(frame_copy, (x,y))
-
+        print("ball:", x, y)
+        print("error:", x_t - x, y_t - y)
         # === TIMING CONTROL ===
         elapsed = time.perf_counter() - loop_start
         sleep_time = (1 / hz) - elapsed
