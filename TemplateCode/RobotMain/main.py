@@ -79,22 +79,10 @@ x, y = 100, 75
 # ================================
 
 def capture():
-    """
-    Continuously captures frames from the camera.
+    global latest_frame, running
 
-    Writes to shared variable `latest_frame`.
-
-    IMPORTANT:
-    - This should run as fast as possible
-    - No heavy processing here
-    """
-
-    global latest_frame
-
-    while True:
+    while running:
         frame = cam.take_picture()
-
-        # Protect shared memory
         with lock:
             latest_frame = frame
 
