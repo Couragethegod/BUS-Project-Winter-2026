@@ -1,7 +1,7 @@
 import math
 import numpy as np
 #
-
+######
 class RobotKinematics:
     """
     This class models the inverse kinematics of a 3-arm parallel robot (likely a delta-style mechanism).
