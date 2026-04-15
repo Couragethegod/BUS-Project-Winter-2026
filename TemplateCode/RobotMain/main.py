@@ -162,7 +162,14 @@ def update_robot_pos(robotcontroller, robotkinematics, pidcontroller,
     # Should clamp theta based on robotkinematics.maxtheta
 
     # Send command to robot
-    robotcontroller.Goto_N_time_spherical(theta, phi, 8.26)
+    if not hasattr(update_robot_pos, "last_time"):
+        update_robot_pos.last_time = 0
+
+    now = time.time()
+
+    if now - update_robot_pos.last_time > 0.05:  # 20 Hz max
+        robotcontroller.Goto_time_spherical(theta, phi, 0.1)
+        update_robot_pos.last_time = now
 
     # ⚠️ Hardcoded height (8.26)
     # This should match your calibrated working height
