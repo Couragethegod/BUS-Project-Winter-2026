@@ -11,12 +11,17 @@ pca = PCA9685(i2c)
 pca.frequency = 50
 
 # ----------------------------
-# SAFE CALIBRATION (IMPORTANT)
+# SAFE LIMITS (MG996R)
 # ----------------------------
 SERVO_MIN = 320
-SERVO_MAX = 400
+SERVO_MAX = 420
 MAX_ANGLE = 90
 SAFE_MARGIN = 5
+
+# ----------------------------
+# Position tracking
+# ----------------------------
+current_angle = 45  # safe startup middle position
 
 # ----------------------------
 # Convert angle to PWM
@@ -25,52 +30,59 @@ def angle_to_pwm(angle):
     return int(SERVO_MIN + (angle / MAX_ANGLE) * (SERVO_MAX - SERVO_MIN))
 
 # ----------------------------
-# Smooth & safe movement
+# LOW-LEVEL move (absolute)
 # ----------------------------
-current_angle = 45  # start in a safe middle position
-
-def move_servo(target):
+def move_absolute(angle):
     global current_angle
 
-    # Clamp input to safe range
-    if target < SAFE_MARGIN:
-        target = SAFE_MARGIN
-    if target > (MAX_ANGLE - SAFE_MARGIN):
-        target = MAX_ANGLE - SAFE_MARGIN
+    # safety clamp
+    angle = max(SAFE_MARGIN, min(angle, MAX_ANGLE - SAFE_MARGIN))
 
-    # Move gradually (prevents gear stress)
-    step = 1 if target > current_angle else -1
+    step = 1 if angle > current_angle else -1
 
-    for angle in range(current_angle, target, step):
-        pwm = angle_to_pwm(angle)
-        pca.channels[0].duty_cycle = pwm << 4
+    for a in range(current_angle, angle, step):
+        pca.channels[0].duty_cycle = angle_to_pwm(a) << 4
         time.sleep(0.02)
 
-    current_angle = target
-    print(f"Moved safely to {current_angle}°")
+    current_angle = angle
+    print(f"[ABS] Moved to {current_angle}°")
+
+# ----------------------------
+# HIGH-LEVEL move (relative)
+# ----------------------------
+def move_relative(delta):
+    target = current_angle + delta
+    move_absolute(target)
+    print(f"[REL] Moved by {delta}°")
 
 # ----------------------------
 # Main loop
 # ----------------------------
 try:
-    print("Safe servo controller ready (0–90° range)")
-    move_servo(45)  # center on startup
+    print("Hybrid servo control ready")
+    move_absolute(45)  # safe startup position
     time.sleep(0.5)
 
     while True:
-        val = input("Enter angle (0–90) or q: ")
+        cmd = input("Enter (a=absolute, r=relative, q=quit): ")
 
-        if val.lower() == 'q':
+        if cmd == "q":
             break
 
         try:
-            angle = int(val)
-            move_servo(angle)
+            mode, value = cmd.split()
+            value = int(value)
+
+            if mode == "a":
+                move_absolute(value)
+            elif mode == "r":
+                move_relative(value)
+            else:
+                print("Use: a 30 or r 5")
         except:
-            print("Enter a valid number")
+            print("Format: a 30 (absolute) OR r 5 (relative)")
 
 finally:
-    # Safe shutdown
     pca.channels[0].duty_cycle = 0
     pca.deinit()
-    print("Cleaned up safely")
+    print("Cleaned up")
