@@ -18,7 +18,7 @@ class RobotKinematics:
     - invert: flips configuration (elbow-up vs elbow-down behavior)
     """
 
-    def __init__(self, lp=14.00, l1=7.416, l2=9.6, lb=7.40, invert=False):
+    def __init__(self, lp=14.00, l1=10, l2=9.6, lb=7.40, invert=False):
 
         # === GEOMETRY PARAMETERS ===
         self.lp = lp    # Radius of TOP platform (distance from center to joints A1, A2, A3)
