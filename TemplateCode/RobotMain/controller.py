@@ -14,7 +14,7 @@ import math
 import random
 
 
-def clamp(value, lower=19, upper=90):
+def clamp(value, lower=0, upper=90):
     """
     Restrict a value between lower and upper bounds.
     
@@ -65,10 +65,10 @@ class RobotController:
         print("Initializing ...")
 
         # Move to mid position
-        self.set_motor_angles(54, 54, 54)
+        self.set_motor_angles(67, 67, 67)
 
         # Slowly move to minimum angles
-        self.interpolate_time([19, 19, 19], duration=0.25)
+        self.interpolate_time([55, 55, 55], duration=0.25)
 
         time.sleep(1)
 
