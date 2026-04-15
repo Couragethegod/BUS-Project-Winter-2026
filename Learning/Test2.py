@@ -42,7 +42,7 @@ def move_absolute(target):
     step = 1 if target > current_angle else -1
 
     for a in range(current_angle, target, step):
-        pca.channels[0].duty_cycle = angle_to_pwm(a) << 4
+        pca.channels[2].duty_cycle = angle_to_pwm(a) << 4
         time.sleep(0.02)
 
     current_angle = target
