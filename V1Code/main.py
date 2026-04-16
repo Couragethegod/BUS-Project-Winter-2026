@@ -28,7 +28,7 @@ picam2.start()
 
 # ------------------ PID ------------------
 kp = 0.07
-kd = 0.01
+kd = 0.001
 prev_err_x = 0
 prev_err_y = 0
 
@@ -88,7 +88,7 @@ while True:
 
             # -------- SERVO MIXING --------
             # Adjust signs depending on your robot orientation
-            GAIN = 3.0 # increase for more aggressive response
+            GAIN = 4.0 # increase for more aggressive response
 
             s1 = SERVO_NEUTRAL + control_x * GAIN
             s2 = SERVO_NEUTRAL - control_x/2 * GAIN + control_y * GAIN
