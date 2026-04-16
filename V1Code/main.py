@@ -42,8 +42,8 @@ while True:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Detect dark ball
-    lower = np.array([0, 0, 0])
-    upper = np.array([180, 255, 70])
+    lower = np.array([20, 100, 100])
+    upper = np.array([30, 255, 255])
     mask = cv2.inRange(hsv, lower, upper)
 
     # Clean noise
