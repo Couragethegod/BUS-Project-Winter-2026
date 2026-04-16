@@ -1,24 +1,26 @@
-# ball_balancer_gpiozero.py
+# ball_balancer_pca9685.py
 #
-# Raspberry Pi + Pi Camera + 3 MG996R servos (without pigpio)
-# Ball balancer starter code using gpiozero
+# Raspberry Pi + Pi Camera + PCA9685 + 3 MG996R servos
+# Ball balancer starter code using PCA9685
 
 import time
 import cv2
 import numpy as np
-from gpiozero import AngularServo
+from adafruit_pca9685 import PCA9685
 from picamera2 import Picamera2
+import board
+import busio
 
 # =========================
 # USER SETTINGS
 # =========================
 
-# GPIO pins for the 3 servo signal wires
-SERVO_PINS = [0, 1, 2]
+# I2C address of the PCA9685 board
+PCA9685_ADDRESS = 0x40
 
 # Servo calibration in degrees (adjust as needed)
-SERVO_MIN = 45 # Minimum servo angle
-SERVO_MAX = 80   # Maximum servo angle
+SERVO_MIN = 40  # Minimum PWM value (usually 0)
+SERVO_MAX = 80  # Maximum PWM value (usually 180)
 
 # Camera size
 FRAME_W = 640
@@ -98,12 +100,12 @@ class PID:
         return clamp(output, -self.out_limit, self.out_limit)
 
 
-def level_platform(servos):
+def level_platform(pwm):
     """
-    Center the platform by setting all servos to the middle position (0 degrees).
+    Center the platform by setting all servos to the middle position (90 degrees).
     """
-    for servo in servos:
-        servo.angle = 0
+    for i in range(3):
+        pwm.set_pwm(i, 0, int(90 / 180 * 4095))  # Convert 90 degrees to PWM value
 
 
 def detect_ball(frame):
@@ -154,8 +156,10 @@ def mix_xy_to_3_servos(ux, uy):
 # =========================
 
 def main():
-    # Initialize servos
-    servos = [AngularServo(pin, min_angle=SERVO_MIN, max_angle=SERVO_MAX) for pin in SERVO_PINS]
+    # Setup I2C communication
+    i2c = busio.I2C(board.SCL, board.SDA)
+    pwm = PCA9685(i2c)
+    pwm.frequency = 60  # Set the PWM frequency for servos (typical value for servos)
 
     # Camera setup
     picam2 = Picamera2()
@@ -209,15 +213,15 @@ def main():
                 # Convert X/Y tilt to 3 servos
                 servo_cmds = mix_xy_to_3_servos(ux, uy)
 
-                # Apply commands
+                # Apply commands to the PCA9685 (map [-1, 1] to PWM range)
                 for i in range(3):
-                    servos[i].angle = servo_cmds[i] * 90  # Convert [-1, 1] to degrees [-90, 90]
+                    pwm.set_pwm(i, 0, int((servo_cmds[i] * 90 + 90) / 180 * 4095))  # Map to PWM values
 
             else:
                 # No ball found: level platform and reset PID
                 pid_x.reset()
                 pid_y.reset()
-                level_platform(servos)
+                level_platform(pwm)
 
             if SHOW_WINDOWS:
                 # Draw target center
@@ -238,7 +242,7 @@ def main():
                     break
 
     finally:
-        level_platform(servos)
+        level_platform(pwm)
         time.sleep(0.5)
         picam2.stop()
         cv2.destroyAllWindows()
