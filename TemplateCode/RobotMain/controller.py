@@ -82,6 +82,8 @@ class RobotController:
         time.sleep(1)
 
         print("Initialized!")
+
+        time.sleep(2)
     
 
     def set_motor_angles(self, theta1, theta2, theta3):
