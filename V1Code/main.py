@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import time
 from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
 from collections import deque
@@ -25,7 +24,7 @@ def set_servos(a1, a2, a3):
 # ------------------ CAMERA SETUP ------------------
 picam2 = Picamera2()
 
-# Configure the camera for preview mode
+# Configure the camera for preview mode with the required resolution
 config = picam2.create_preview_configuration(main={"size": (320, 240)})
 picam2.configure(config)
 
@@ -50,16 +49,15 @@ upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
 class Camera:
     def __init__(self, resolution=(1640, 1232), format="RGB888"):
         self.picam2 = Picamera2()
-        config = self.picam2.create_preview_configuration(main={"size": resolution, "format": format}, controls={"FrameDurationLimits": (8333, 8333)})
+        config = self.picam2.create_preview_configuration(main={"size": resolution, "format": format})
         self.picam2.configure(config)
+        self.picam2.start()
 
         self.lower_black = np.array([0, 0, 0])
         self.upper_black = np.array([180, 255, 50])
         self.gray_threshold = 60
         self.queue = deque(maxlen=16)
         self.queue.append((100, 75))  # Start with a default position
-
-        self.picam2.start()
 
     def take_picture(self):
         """Capture an image frame and return it."""
@@ -78,7 +76,7 @@ class Camera:
         if image is not None:
             cv2.imshow(window_name, image)
             cv2.waitKey(1)
-#
+
     def display_draw(self, image, center, window_name="Tracked Output"):
         """Display the frame with drawn tracking circles."""
         x, y = center
