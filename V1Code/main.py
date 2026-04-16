@@ -78,7 +78,7 @@ class Camera:
         if image is not None:
             cv2.imshow(window_name, image)
             cv2.waitKey(1)
-
+#
     def display_draw(self, image, center, window_name="Tracked Output"):
         """Display the frame with drawn tracking circles."""
         x, y = center
