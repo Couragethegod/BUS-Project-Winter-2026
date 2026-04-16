@@ -3,6 +3,7 @@ import numpy as np
 import time
 from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
+from collections import deque
 
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
@@ -36,6 +37,12 @@ prev_err_y = 0
 TARGET_X = 160  # Center X (horizontal center of the frame)
 TARGET_Y = 120  # Center Y (vertical center of the frame)
 
+# ------------------ CAMERA COLOR DETECTION ------------------
+
+# Define the yellow color range in HSV (adjust if necessary)
+lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
+upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
+
 # ------------------ MAIN LOOP ------------------
 while True:
     frame = picam2.capture_array()
@@ -52,23 +59,28 @@ while True:
     # Convert the frame from BGR to HSV color space
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Debug: Show the HSV image directly (to visualize color space)
-    cv2.imshow("HSV Image", hsv)
+    # ------------------ MASK FOR YELLOW BALL ------------------
+    # Apply Gaussian blur to reduce noise
+    frame_blurred = cv2.GaussianBlur(hsv, (5, 5), 0)
 
-    # ------------------ DETECT YELLOW BALL ------------------
-    # Define HSV range for yellow color
-    lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
-    upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
+    # Create the mask based on the yellow color range
+    mask_hsv = cv2.inRange(frame_blurred, lower_yellow, upper_yellow)
 
-    # Create a binary mask where yellow areas are white, the rest are black
-    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    # Convert the frame to grayscale to combine the detection
+    frame_gray = cv2.cvtColor(frame_blurred, cv2.COLOR_BGR2GRAY)
+    gray_threshold = 60
+    mask_gray = cv2.threshold(frame_gray, gray_threshold, 255, cv2.THRESH_BINARY_INV)[1]
 
-    # Optional: Clean the mask (remove small noise)
-    mask = cv2.GaussianBlur(mask, (3, 3), 0)
+    # Combine the HSV and grayscale masks
+    mask_combined = cv2.bitwise_or(mask_hsv, mask_gray)
+
+    # Process the combined mask (erosion and dilation to remove noise)
+    mask_eroded = cv2.erode(mask_combined, None, iterations=1)
+    mask_dilated = cv2.dilate(mask_eroded, None, iterations=1)
 
     # ------------------ FIND CENTROID OF YELLOW AREA ------------------
     # Find all non-zero pixels in the mask
-    yellow_pixels = np.where(mask > 0)
+    yellow_pixels = np.where(mask_dilated > 0)
 
     if len(yellow_pixels[0]) > 0:  # If we found yellow pixels
         # Calculate the centroid of the yellow pixels
