@@ -20,9 +20,9 @@ for s in SERVO_IDS:
     kit.servo[s].angle = SERVO_NEUTRAL
 
 # ------------------ PID PARAMETERS ------------------
-Kp = 0.05
-Ki = 0.0003
-Kd = 0.03
+Kp = 0.035
+Ki = 0.000
+Kd = 0.01
 
 integral_x = 0
 integral_y = 0
