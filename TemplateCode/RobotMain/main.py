@@ -3,236 +3,109 @@ import time
 import cv2
 import math
 import numpy as np
-
-# Custom modules
 from camera import Camera
 from controller import RobotController
 from robotKinematics import RobotKinematics
 from PID import PIDcontroller
 
 
-# ================================
-# SHARED STATE BETWEEN THREADS
-# ================================
-
-# Latest camera frame (shared between capture + processing threads)
+# Shared variables
 latest_frame = np.zeros((200, 150, 3), dtype=np.uint8)
-
-# Lock prevents race conditions when reading/writing frames
 lock = threading.Lock()
-
-# Global flag to stop threads safely
 running = True
 
+kp = 0.015
+ki = 0.0
+kd = 0.00865
 
-# ================================
-# PID TUNING PARAMETERS
-# ================================
 
-# These directly control robot responsiveness:
-# - kp: how aggressively robot reacts to error
-# - ki: corrects steady-state error (drift)
-# - kd: dampens motion (prevents overshoot)
 
-# ⚠️ You overwrote values multiple times → only last set matters
-kp = 0.0063      # Lower = smoother but slower response
-ki = 0.00005     # Too high → oscillation / drift
-kd = 0.006025    # Higher = more damping
+#kp = 0.0134
+#kd = 0.0024
 
-# ⚠️ These look like smoothing/filtering parameters (depends on PID implementation)
+
+kp = 0.0063 #0.0063   0.0046
+ki = 0.00005 #0.00005
+kd = 0.006025 #0.00595    0.00595
+
+
+
 alpha = 0.65
 beta = 0.3
 
 
-# ================================
-# INITIALIZE HARDWARE + MODEL
-# ================================
-
+# Initialize objects
 cam = Camera()
-
-# Kinematics model (math)
 model = RobotKinematics()
-
-# Controller (hardware interface)
-# ⚠️ You're passing geometry AGAIN → redundant if already in model
 robot = RobotController(model, model.lp, model.l1, model.l2, model.lb)
 
-# PID controller
-PID = PIDcontroller(
-    kp, ki, kd,
-    alpha, beta,
-    max_theta=model.maxtheta,   # Limits tilt angle
-    conversion="tanh"           # Likely smooths output (good for stability)
-)
 
+PID = PIDcontroller(kp, ki, kd, alpha, beta, max_theta=model.maxtheta, conversion="tanh")
 
-# ================================
-# INITIAL BALL POSITION (DEFAULT)
-# ================================
-
-# These are fallback values before camera detects anything
+#Initialize Ball Position
 x, y = 100, 75
 
-
-# ================================
-# THREAD 1: CAMERA CAPTURE
-# ================================
-
 def capture():
-    global latest_frame, running
 
-    while running:
+    global latest_frame
+    while True:
         frame = cam.take_picture()
         with lock:
-            latest_frame = frame
-
-
-# ================================
-# THREAD 2: IMAGE PROCESSING + CONTROL
-# ================================
+            latest_frame = frame 
 
 def process():
-    """
-    Main control loop:
-    - Reads latest frame
-    - Detects ball position
-    - Runs PID → computes tilt
-    - Sends commands to robot
-
-    hz = 50 → 50Hz control loop (good target)
-    """
-
     hz = 50
-
     global latest_frame, x, y
-
     while True:
-        # Copy frame safely
         with lock:
             if latest_frame is None:
-                continue
+                continue 
             frame_copy = latest_frame.copy()
-
-        loop_start = time.perf_counter()
-
-        # === COMPUTER VISION ===
-        # Detect ball position (pixel coordinates)
-        x, y = cam.coordinate(frame_copy)
-
-        # === TARGET POSITION ===
-        # You want the ball centered
         
-        #x_t, y_t = (100, 75)
-
-        h, w = frame_copy.shape[:2]
-        x_t, y_t = (w // 2, h // 2)
-
-        # === CONTROL STEP ===
+        loop_start = time.perf_counter()
+        x, y = cam.coordinate(frame_copy)  
+        x_t, y_t = (100, 75)  # Target position
         update_robot_pos(robot, model, PID, x_t, y_t, x, y)
-
-        # Optional visualization (slow → affects performance)
-        # cam.display_draw(frame_copy, (x,y))
-        print("ball:", x, y)
-        print("error:", x_t - x, y_t - y)
-        # === TIMING CONTROL ===
+        #cam.display_draw(frame_copy, (x,y))
+        #print(f"Coordinates: {x, y}")
         elapsed = time.perf_counter() - loop_start
         sleep_time = (1 / hz) - elapsed
-
         if sleep_time > 0:
+            #print(sleep_time)
             time.sleep(sleep_time)
 
+def update_robot_pos(robotcontroller, robotkinematics, pidcontroller, x_t, y_t, x, y): #x_t, y_t: target position, x, y: current position, t: duration 
 
-# ================================
-# CONTROL HELPER FUNCTION
-# ================================
-
-def update_robot_pos(robotcontroller, robotkinematics, pidcontroller,
-                     x_t, y_t, x, y):
-    """
-    Converts position error → robot movement.
-
-    Steps:
-    1. PID computes desired tilt (theta, phi)
-    2. Robot controller executes movement
-
-    USER TUNING:
-    - This is where you'd clamp max tilt
-    - Or smooth movement
-    """
-
-    # PID output → desired platform tilt
     theta, phi = pidcontroller.pid((x_t, y_t), (x, y))
-
-    # ⚠️ No safety limits applied here → dangerous
-    # Should clamp theta based on robotkinematics.maxtheta
-
-    # Send command to robot
-    if not hasattr(update_robot_pos, "last_time"):
-        update_robot_pos.last_time = 0
-
-    now = time.time()
-
-    if now - update_robot_pos.last_time > 0.05:  # 20 Hz max
-        robotcontroller.Goto_time_spherical(theta, phi, 0.1)
-        update_robot_pos.last_time = now
-
-    # ⚠️ Hardcoded height (8.26)
-    # This should match your calibrated working height
+    #print(theta, phi)
+    #robotcontroller.Goto_time_spherical(theta, phi, 8.26, 0.02)
+    robotcontroller.Goto_N_time_spherical(theta, phi, 8.26)
 
 
-# ================================
-# OPTIONAL: SEPARATE PID LOOP (NOT USED)
-# ================================
 
 def pid_loop():
-    """
-    Alternative PID loop (currently unused).
-
-    This would decouple:
-    - vision (process thread)
-    - control (this thread)
-
-    RIGHT NOW:
-    You're doing both in one loop → simpler but less stable
-    """
-
-    hz = 30
-
+    hz = 30  # PID frequency
     while running:
         loop_start = time.perf_counter()
-
-        x_t, y_t = (100, 75)
-
+        x_t, y_t = (100, 75)  # Target position
         update_robot_pos(robot, model, PID, x_t, y_t, x, y)
-
         elapsed = time.perf_counter() - loop_start
         sleep_time = (1 / hz) - elapsed
-
         if sleep_time > 0:
+            #print(sleep_time)
             time.sleep(sleep_time)
-
-
-# ================================
-# START THREADS
-# ================================
-
+            
+# Start threads
 threading.Thread(target=capture, daemon=True).start()
 threading.Thread(target=process, daemon=True).start()
-
-# Give camera time to initialize
 time.sleep(2)
-
 #threading.Thread(target=pid_loop).start()
 
 
-# ================================
-# MAIN LOOP (KEEP PROGRAM ALIVE)
-# ================================
-
+# Keep running until manually stopped
 try:
     while True:
         time.sleep(1)
-
 except KeyboardInterrupt:
     running = False
     print("Exiting...")
