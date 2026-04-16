@@ -7,6 +7,15 @@ from board import SCL, SDA
 import busio
 
 # ---------------------------
+# CAMERA SETTINGS (FIXED)
+# ---------------------------
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+
+cx = FRAME_WIDTH // 2
+cy = FRAME_HEIGHT // 2
+
+# ---------------------------
 # PCA9685 SETUP
 # ---------------------------
 i2c = busio.I2C(SCL, SDA)
@@ -41,14 +50,16 @@ set_servo(SERVO_Y, servo_y)
 time.sleep(1)
 
 # ---------------------------
-# CAMERA
+# CAMERA INIT
 # ---------------------------
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
 
-ret, frame = cap.read()
-h, w, _ = frame.shape
-cx = w // 2
-cy = h // 2
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+
+if not cap.isOpened():
+    print("Camera failed")
+    exit()
 
 # ---------------------------
 # YELLOW DETECTION
@@ -57,13 +68,12 @@ lower_yellow = np.array([20, 100, 100])
 upper_yellow = np.array([35, 255, 255])
 
 # ---------------------------
-# PID PARAMETERS (START HERE)
+# PID CONSTANTS
 # ---------------------------
 Kp = 0.015
 Ki = 0.0005
 Kd = 0.008
 
-# PID state
 integral_x = 0
 integral_y = 0
 
@@ -72,15 +82,15 @@ prev_error_y = 0
 
 prev_time = time.time()
 
-# Anti-windup limit
 INTEGRAL_LIMIT = 1000
 
 # ---------------------------
-# MAIN LOOP
+# LOOP
 # ---------------------------
 while True:
     ret, frame = cap.read()
-    if not ret:
+
+    if not ret or frame is None:
         continue
 
     current_time = time.time()
@@ -104,35 +114,25 @@ while True:
             error_x = x - cx
             error_y = y - cy
 
-            # ---------------- PID X ----------------
+            # PID X
             integral_x += error_x * dt
             integral_x = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_x))
 
             derivative_x = (error_x - prev_error_x) / dt if dt > 0 else 0
 
-            output_x = (
-                Kp * error_x +
-                Ki * integral_x +
-                Kd * derivative_x
-            )
-
+            output_x = Kp * error_x + Ki * integral_x + Kd * derivative_x
             prev_error_x = error_x
 
-            # ---------------- PID Y ----------------
+            # PID Y
             integral_y += error_y * dt
             integral_y = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_y))
 
             derivative_y = (error_y - prev_error_y) / dt if dt > 0 else 0
 
-            output_y = (
-                Kp * error_y +
-                Ki * integral_y +
-                Kd * derivative_y
-            )
-
+            output_y = Kp * error_y + Ki * integral_y + Kd * derivative_y
             prev_error_y = error_y
 
-            # Apply (invert axis if needed)
+            # Apply
             servo_x -= output_x
             servo_y += output_y
 
@@ -143,11 +143,11 @@ while True:
             set_servo(SERVO_X, servo_x)
             set_servo(SERVO_Y, servo_y)
 
-            # Debug draw
+            # Debug visuals
             cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
             cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
 
-    cv2.imshow("PID Ball Balance", frame)
+    cv2.imshow("PID Balance", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
