@@ -18,9 +18,9 @@ class RobotController:
         
         # Initialize the ServoKit and assign servos
         self.Controller = ServoKit(channels=16)
-        self.s1 = self.Controller.servo[13]
-        self.s2 = self.Controller.servo[15]
-        self.s3 = self.Controller.servo[14]
+        self.s1 = self.Controller.servo[0]
+        self.s2 = self.Controller.servo[0]
+        self.s3 = self.Controller.servo[0]
 
         # Configure servos
         for s in (self.s1, self.s2, self.s3):
