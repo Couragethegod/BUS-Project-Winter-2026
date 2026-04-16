@@ -24,7 +24,10 @@ def set_servos(a1, a2, a3):
 
 # ------------------ CAMERA SETUP ------------------
 picam2 = Picamera2()
-picam2.configure(picam2.create_preview_configuration(main={"size": (320, 240)}))
+config = picam2.create_preview_configuration(main={"size": (320, 240)})
+picam2.configure(config)
+
+# Start the camera and allocate resources
 picam2.start()
 
 # ------------------ PID PARAMETERS ------------------
@@ -57,7 +60,7 @@ class Camera:
         self.picam2.start()    
 
     def take_picture(self):
-        image = self.picam2.capture_array()
+        image = self.picam2.capture_array()  # Captures the frame as an array
         scale = 200.0 / image.shape[1]
         frame_resized = cv2.resize(image, (200, int(image.shape[0] * scale)))
         return frame_resized
