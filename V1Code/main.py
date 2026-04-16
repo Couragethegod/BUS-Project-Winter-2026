@@ -41,12 +41,12 @@ while True:
     # Convert to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Detect dark ball
-    lower = np.array([20, 100, 100])
-    upper = np.array([30, 255, 255])
-    mask = cv2.inRange(hsv, lower, upper)
+    # Detect yellow ball (corrected HSV range for yellow)
+    lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
+    upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
+    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
-    # Clean noise
+    # Clean noise (optional: smoothing to reduce small noise)
     mask = cv2.GaussianBlur(mask, (5, 5), 0)
 
     # Find contours
@@ -59,8 +59,8 @@ while True:
         if r > 5:
             x, y = int(x), int(y)
 
-            # Draw
-            cv2.circle(frame, (x, y), int(r), (0, 255, 0), 2)
+            # Draw the circle around the detected yellow ball
+            cv2.circle(frame, (x, y), int(r), (0, 255, 0), 2)  # Green circle for debugging
 
             # -------- PID --------
             err_x = x - TARGET_X
@@ -76,17 +76,16 @@ while True:
             prev_err_y = err_y
 
             # -------- SERVO MIXING --------
-            # Adjust signs depending on your robot orientation
-
             s1 = SERVO_NEUTRAL + control_x
-            s2 = SERVO_NEUTRAL - control_x/2 + control_y
-            s3 = SERVO_NEUTRAL - control_x/2 - control_y
+            s2 = SERVO_NEUTRAL - control_x / 2 + control_y
+            s3 = SERVO_NEUTRAL - control_x / 2 - control_y
 
             set_servos(s1, s2, s3)
 
-            # Debug
-            cv2.circle(frame, (TARGET_X, TARGET_Y), 5, (0, 0, 255), -1)
-
+            # Debug: Draw target center
+            cv2.circle(frame, (TARGET_X, TARGET_Y), 5, (0, 0, 255), -1)  # Red dot for target
+           
+    # Show the frame
     cv2.imshow("Ball Balancer", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
