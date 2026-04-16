@@ -9,7 +9,7 @@ kit = ServoKit(channels=16)
 
 SERVO_MIN = 45
 SERVO_MAX = 80
-SERVO_NEUTRAL = 60  # adjust this to your platform level
+SERVO_NEUTRAL = 60
 
 def clamp(val):
     return max(SERVO_MIN, min(SERVO_MAX, val))
@@ -41,12 +41,11 @@ while True:
     # Convert to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # -------- YELLOW DETECTION --------
-    # These ranges are a GOOD starting point (not perfect)
-    lower_yellow = np.array([75, 80, 80])
-    upper_yellow = np.array([105, 255, 255])
+    # -------- Teal DETECTION --------
+    lower_teal = np.array([90, 100, 100])
+    upper_teal = np.array([110, 255, 255])
 
-    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    mask = cv2.inRange(hsv, lower_teal, upper_teal)
 
     # Clean noise
     mask = cv2.GaussianBlur(mask, (3, 3), 0)
@@ -85,7 +84,7 @@ while True:
             # Adjust signs depending on your robot orientation
             GAIN = 3.0 # increase for more aggressive response
 
-            s1 = SERVO_NEUTRAL + control_x
+            s1 = SERVO_NEUTRAL + control_x * GAIN
             s2 = SERVO_NEUTRAL - control_x/2 * GAIN + control_y * GAIN
             s3 = SERVO_NEUTRAL - control_x/2 * GAIN - control_y * GAIN
 
