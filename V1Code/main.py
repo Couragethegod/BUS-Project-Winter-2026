@@ -9,7 +9,7 @@ kit = ServoKit(channels=16)
 
 SERVO_MIN = 45
 SERVO_MAX = 80
-SERVO_NEUTRAL = 60
+SERVO_NEUTRAL = 50
 
 def clamp(val):
     return max(SERVO_MIN, min(SERVO_MAX, val))
@@ -25,7 +25,7 @@ picam2.configure(picam2.create_preview_configuration(main={"size": (320, 240)}))
 picam2.start()
 
 # ------------------ PID ------------------
-kp = 0.055
+kp = 0.07
 kd = 0.01
 prev_err_x = 0
 prev_err_y = 0
