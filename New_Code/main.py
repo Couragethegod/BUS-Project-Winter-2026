@@ -22,7 +22,7 @@ FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 CAMERA_FLIP = -1
 
-SERVO_CHANNELS = [0, 1, 2]
+SERVO_CHANNELS = [0, 2, 1]
 SERVO_CENTER_ANGLES = [62.0, 62.5, 62.5]
 SERVO_DIRECTIONS = [1.0, 1.0, 1.0]
 SERVO_TRIMS = [0.0, 0.0, 0.0]
@@ -30,8 +30,8 @@ SERVO_TRIMS = [0.0, 0.0, 0.0]
 SAFE_SERVO_MIN = 45.0
 SAFE_SERVO_MAX = 80.0
 SERVO_FREQUENCY = 50
-SERVO_MIN_PULSE_US = 500
-SERVO_MAX_PULSE_US = 2500
+SERVO_MIN_PULSE_US = 0
+SERVO_MAX_PULSE_US = 360
 
 PLATFORM_HEIGHT = 8.26
 MAX_TILT = 8.0
@@ -41,8 +41,8 @@ BALL_LOST_TIMEOUT = 0.35
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
 
-TEAL_LOWER = np.array([75, 70, 45], dtype=np.uint8)
-TEAL_UPPER = np.array([105, 255, 255], dtype=np.uint8)
+TEAL_LOWER = np.array([90, 100, 100], dtype=np.uint8)
+TEAL_UPPER = np.array([110, 255, 255], dtype=np.uint8)
 
 
 def clamp(value, lower, upper):
@@ -190,8 +190,8 @@ def main():
     pca = setup_servos()
     model = RobotKinematics(lp=7.0, l1=10.0, l2=9.6, lb=7.4)
 
-    pid_x = PIDcontroller(kp=0.025, ki=0.0009, kd=0.012, integral_limit=250.0, output_limit=MAX_TILT)
-    pid_y = PIDcontroller(kp=0.025, ki=0.0009, kd=0.012, integral_limit=250.0, output_limit=MAX_TILT)
+    pid_x = PIDcontroller(kp=0.04, ki=0.0009, kd=0.012, integral_limit=250.0, output_limit=MAX_TILT)
+    pid_y = PIDcontroller(kp=0.04, ki=0.0009, kd=0.012, integral_limit=250.0, output_limit=MAX_TILT)
 
     home_joint_angles = get_home_joint_angles(model)
     home_servo_angles = tuple(
