@@ -1,21 +1,13 @@
-# ball_balancer_pi.py
+# ball_balancer_gpiozero.py
 #
-# Raspberry Pi + Pi Camera + 3 MG996R servos
-# Ball balancer starter code
-#
-# What it does:
-# 1. Captures frames from the Pi camera
-# 2. Detects a colored ball
-# 3. Computes X/Y error from the center of the platform
-# 4. Uses PID control to tilt the platform
-# 5. Mixes X/Y tilt into 3 servo commands spaced 120 degrees apart
+# Raspberry Pi + Pi Camera + 3 MG996R servos (without pigpio)
+# Ball balancer starter code using gpiozero
 
 import time
 import cv2
 import numpy as np
-import pigpio
+from gpiozero import AngularServo
 from picamera2 import Picamera2
-
 
 # =========================
 # USER SETTINGS
@@ -24,17 +16,9 @@ from picamera2 import Picamera2
 # GPIO pins for the 3 servo signal wires
 SERVO_PINS = [0, 1, 2]
 
-# Servo calibration in microseconds
-# Adjust these for your exact mechanism
-SERVO_MIN_US = [55, 55, 55]
-SERVO_MID_US = [75, 75, 75]
-SERVO_MAX_US = [80, 80, 80]
-
-# Flip individual servos if one moves opposite to what you expect
-SERVO_DIR = [1, 1, 1]
-
-# How strongly each servo responds to normalized command [-1..1]
-SERVO_GAIN_US = [180, 180, 180]
+# Servo calibration in degrees (adjust as needed)
+SERVO_MIN = 45 # Minimum servo angle
+SERVO_MAX = 80   # Maximum servo angle
 
 # Camera size
 FRAME_W = 640
@@ -45,16 +29,11 @@ TARGET_X = FRAME_W // 2
 TARGET_Y = FRAME_H // 2
 
 # HSV threshold for the ball color
-# Example below is for a yellow ball. Change these for your ball.
 LOWER_HSV = np.array([20, 100, 100])
 UPPER_HSV = np.array([30, 255, 255])
 
 BALL_MIN_RADIUS = 8
 DEADBAND_PX = 8
-
-# If the platform moves the wrong way, flip these
-TILT_SIGN_X = 1.0
-TILT_SIGN_Y = 1.0
 
 # PID gains
 KP_X = 0.010
@@ -119,29 +98,12 @@ class PID:
         return clamp(output, -self.out_limit, self.out_limit)
 
 
-def set_servo_command(pi, servo_index, normalized_cmd):
+def level_platform(servos):
     """
-    normalized_cmd in range [-1, +1]
+    Center the platform by setting all servos to the middle position (0 degrees).
     """
-    normalized_cmd = clamp(normalized_cmd, -1.0, 1.0)
-
-    pulse = (
-        SERVO_MID_US[servo_index]
-        + SERVO_DIR[servo_index] * SERVO_GAIN_US[servo_index] * normalized_cmd
-    )
-
-    pulse = clamp(pulse, SERVO_MIN_US[servo_index], SERVO_MAX_US[servo_index])
-    pi.set_servo_pulsewidth(SERVO_PINS[servo_index], pulse)
-
-
-def level_platform(pi):
-    for i in range(3):
-        pi.set_servo_pulsewidth(SERVO_PINS[i], SERVO_MID_US[i])
-
-
-def release_servos(pi):
-    for pin in SERVO_PINS:
-        pi.set_servo_pulsewidth(pin, 0)
+    for servo in servos:
+        servo.angle = 0
 
 
 def detect_ball(frame):
@@ -179,7 +141,6 @@ def mix_xy_to_3_servos(ux, uy):
     """
     Convert desired X/Y tilt into 3 servo commands.
     Assumes servos are mechanically spaced 120 degrees apart.
-
     Output range is roughly [-1, 1] before final clamp.
     """
     s1 = ux
@@ -193,14 +154,8 @@ def mix_xy_to_3_servos(ux, uy):
 # =========================
 
 def main():
-    # pigpio connection
-    pi = pigpio.pi()
-    if not pi.connected:
-        raise RuntimeError("pigpio is not running. Start it first with: sudo pigpiod")
-
-    # Initialize servos to center
-    level_platform(pi)
-    time.sleep(1.0)
+    # Initialize servos
+    servos = [AngularServo(pin, min_angle=SERVO_MIN, max_angle=SERVO_MAX) for pin in SERVO_PINS]
 
     # Camera setup
     picam2 = Picamera2()
@@ -248,25 +203,21 @@ def main():
                     error_y = 0.0
 
                 # PID
-                ux = TILT_SIGN_X * pid_x.update(error_x, dt)
-                uy = TILT_SIGN_Y * pid_y.update(error_y, dt)
+                ux = pid_x.update(error_x, dt)
+                uy = pid_y.update(error_y, dt)
 
                 # Convert X/Y tilt to 3 servos
                 servo_cmds = mix_xy_to_3_servos(ux, uy)
 
                 # Apply commands
                 for i in range(3):
-                    set_servo_command(pi, i, servo_cmds[i])
-
-                if SHOW_WINDOWS:
-                    cv2.circle(frame, (int(cx), int(cy)), int(radius), (0, 255, 0), 2)
-                    cv2.circle(frame, (int(filt_x), int(filt_y)), 4, (0, 0, 255), -1)
+                    servos[i].angle = servo_cmds[i] * 90  # Convert [-1, 1] to degrees [-90, 90]
 
             else:
                 # No ball found: level platform and reset PID
                 pid_x.reset()
                 pid_y.reset()
-                level_platform(pi)
+                level_platform(servos)
 
             if SHOW_WINDOWS:
                 # Draw target center
@@ -287,12 +238,10 @@ def main():
                     break
 
     finally:
-        level_platform(pi)
+        level_platform(servos)
         time.sleep(0.5)
-        release_servos(pi)
         picam2.stop()
         cv2.destroyAllWindows()
-        pi.stop()
 
 
 if __name__ == "__main__":
