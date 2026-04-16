@@ -7,9 +7,9 @@ from adafruit_servokit import ServoKit
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
-SERVO_MIN = 30
+SERVO_MIN = 45
 SERVO_MAX = 80
-SERVO_NEUTRAL = 62  # adjust this to your platform level
+SERVO_NEUTRAL = 60  # adjust this to your platform level
 
 def clamp(val):
     return max(SERVO_MIN, min(SERVO_MAX, val))
@@ -25,8 +25,8 @@ picam2.configure(picam2.create_preview_configuration(main={"size": (320, 240)}))
 picam2.start()
 
 # ------------------ PID ------------------
-kp = 0.05
-kd = 0.02
+kp = 0.055
+kd = 0.01
 prev_err_x = 0
 prev_err_y = 0
 
@@ -83,10 +83,11 @@ while True:
 
             # -------- SERVO MIXING --------
             # Adjust signs depending on your robot orientation
+            GAIN = 3.0 # increase for more aggressive response
 
             s1 = SERVO_NEUTRAL + control_x
-            s2 = SERVO_NEUTRAL - control_x/2 + control_y
-            s3 = SERVO_NEUTRAL - control_x/2 - control_y
+            s2 = SERVO_NEUTRAL - control_x/2 * GAIN + control_y * GAIN
+            s3 = SERVO_NEUTRAL - control_x/2 * GAIN - control_y * GAIN
 
             set_servos(s1, s2, s3)
 
