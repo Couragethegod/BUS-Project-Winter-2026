@@ -37,9 +37,7 @@ prev_err_y = 0
 TARGET_X = 160  # Center X (horizontal center of the frame)
 TARGET_Y = 120  # Center Y (vertical center of the frame)
 
-# ------------------ CAMERA COLOR DETECTION ------------------
-
-# Define the yellow color range in HSV (adjust if necessary)
+# ------------------ YELLOW COLOR DETECTION RANGE ------------------
 lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
 upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
 
@@ -47,14 +45,8 @@ upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
 while True:
     frame = picam2.capture_array()
 
-    # Debug: Print frame shape and check format
-    print("Frame shape:", frame.shape)  # (height, width, channels)
-
-    # Check if the frame is in BGR format (expected format)
-    if frame.shape[2] == 3:
-        print("Frame is in BGR format.")  # This is expected for standard color images
-    else:
-        print("Frame format is incorrect, possible issues with camera settings.")
+    # Ensure we're working with the correct color format
+    print("Frame shape:", frame.shape)  # Debug to check frame format and dimensions
 
     # Convert the frame from BGR to HSV color space
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -63,7 +55,7 @@ while True:
     # Apply Gaussian blur to reduce noise
     frame_blurred = cv2.GaussianBlur(hsv, (5, 5), 0)
 
-    # Create the mask based on the yellow color range
+    # Create the HSV mask to detect yellow color
     mask_hsv = cv2.inRange(frame_blurred, lower_yellow, upper_yellow)
 
     # Convert the frame to grayscale to combine the detection
