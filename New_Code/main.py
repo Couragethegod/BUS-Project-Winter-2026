@@ -1,132 +1,73 @@
-import time
-import cv2
+from picamera2 import Picamera2
 import numpy as np
-import board
-import busio
-from adafruit_pca9685 import PCA9685
-from adafruit_servokit import ServoKit
-from PID import PIDcontroller  # Assuming you have a PID controller class or use a library like simple-pid
+import time
+import math
+import cv2
+from controller import RobotController
+from robotKinematics import RobotKinematics
+from PID import PIDcontroller
 
-# Setup PCA9685 with 16 channels
-i2c = busio.I2C(board.SCL, board.SDA)
-pca = PCA9685(i2c)
-pca.frequency = 50
+# Initialize Picamera2
+picam2 = Picamera2()
+picam2.configure(picam2.create_still_configuration())
 
-# Servo control setup
-servo_kit = ServoKit(channels=16)
+# Start the camera
+picam2.start()
 
-# Servo channel mapping (Assuming servos are connected to channel 0, 1, 2)
-servo_channels = [servo_kit.servo[0], servo_kit.servo[1], servo_kit.servo[2]]
+# Initialize robot model and controller
+model = RobotKinematics()
+robot = RobotController(model)
 
-# Servo limits (degrees)
-SERVO_MIN = 55
-SERVO_MAX = 80
+# PID controller settings
+pid = PIDcontroller(kp=0.0063, ki=0.00005, kd=0.006025, alpha=0.65, beta=0.3, max_theta=model.maxtheta, conversion="tanh")
 
-# Camera setup (Pi Camera)
-cap = cv2.VideoCapture(0)
+# Camera frame capture method
+def capture_frame():
+    # Capture a frame from the camera
+    frame = picam2.capture_array()
+    if frame is not None:
+        return frame
+    else:
+        print("Failed to capture image")
+        return None
 
-# Ball color detection range (in HSV)
-LOWER_YELLOW = np.array([20, 100, 100])
-UPPER_YELLOW = np.array([30, 255, 255])
-
-# PID Tuning Parameters
-kp = 0.1
-ki = 0.001
-kd = 0.01
-
-# PID controller setup (for both X and Y axes)
-pid_x = PIDcontroller(kp, ki, kd)
-pid_y = PIDcontroller(kp, ki, kd)
-
-# Ball detection method
-def detect_ball(frame):
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, LOWER_YELLOW, UPPER_YELLOW)
-    blurred = cv2.GaussianBlur(mask, (15, 15), 0)
-    contours, _ = cv2.findContours(blurred, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if contours:
-        # Get the largest contour (ball)
-        largest_contour = max(contours, key=cv2.contourArea)
-        ((x, y), radius) = cv2.minEnclosingCircle(largest_contour)
-
-        # Return the center of the ball
-        return int(x), int(y)
-    
-    # If no ball detected, return previous position or set to None
-    return None, None
-
-# Move servo to a target position
-def move_servo_to_position(servo_index, angle):
-    # Apply strict clamping
-    if angle < SERVO_MIN:
-        angle = SERVO_MIN
-    elif angle > SERVO_MAX:
-        angle = SERVO_MAX
-    servo_channels[servo_index].angle = angle
-
-# Initialize servos to 55° at startup
-def initialize_servos():
-    print("Initializing servos to 55°...")
-    for i in range(3):
-        move_servo_to_position(i, 55)
-    time.sleep(1)  # Wait for servos to settle
-
-# Main control loop with PID
+# Main control loop
 def control_loop():
+    x_t, y_t = (100, 75)  # Target coordinates
+
     try:
         while True:
-            # Capture frame from camera
-            ret, frame = cap.read()
-            if not ret:
-                print("Failed to capture image")
-                break
+            # Capture a frame from the camera
+            frame = capture_frame()
+            if frame is None:
+                continue
 
-            # Ball detection
-            x, y = detect_ball(frame)
+            # Process the frame to find ball position (implement your own ball detection logic here)
+            # For example, detecting a yellow ball in the center
+            x, y = detect_ball_position(frame)
 
-            if x is not None and y is not None:
-                print(f"Ball detected at: {x}, {y}")
+            # Compute desired tilt using PID
+            theta, phi = pid.pid((x_t, y_t), (x, y))
 
-                # Get frame dimensions
-                frame_width = frame.shape[1]
-                frame_height = frame.shape[0]
-                target_x = frame_width // 2
-                target_y = frame_height // 2
+            # Move robot based on PID output
+            robot.Goto_N_time_spherical(theta, phi, 8.26)
 
-                # Calculate the error in X and Y directions
-                error_x = x - target_x
-                error_y = y - target_y
-
-                # Use the PID controllers for X and Y to get the desired angles
-                servo1_angle = pid_x.update(error_x)  # X-axis control
-                servo2_angle = pid_y.update(error_y)  # Y-axis control
-
-                # Apply servo limits
-                servo1_angle = max(SERVO_MIN, min(SERVO_MAX, 55 + servo1_angle))
-                servo2_angle = max(SERVO_MIN, min(SERVO_MAX, 55 + servo2_angle))
-
-                # Move the servos based on PID output
-                move_servo_to_position(0, servo1_angle)  # X-axis servo
-                move_servo_to_position(1, servo2_angle)  # Y-axis servo
-
-            # Display the frame for debugging
-            cv2.imshow("Frame", frame)
-
-            # Exit on 'q' press
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            # Optional: Display frame (for debugging)
+            cv2.imshow("Captured Frame", frame)
+            cv2.waitKey(1)
 
     except KeyboardInterrupt:
         print("Control loop interrupted")
 
     finally:
-        # Release resources
-        cap.release()
+        picam2.stop()
         cv2.destroyAllWindows()
 
-# Startup sequence
-initialize_servos()
+# Function to detect ball position in the frame (you need to implement this)
+def detect_ball_position(frame):
+    # For simplicity, this example just returns fixed coordinates
+    # You should implement real ball detection logic here
+    return 100, 75
 
-# Start the control loop
+# Start control loop
 control_loop()
