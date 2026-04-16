@@ -59,7 +59,7 @@ while True:
     mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Clean noise (optional: smoothing to reduce small noise)
-    mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    mask = cv2.GaussianBlur(mask, (3, 3), 0)
 
     # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
