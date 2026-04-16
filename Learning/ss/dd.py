@@ -51,7 +51,7 @@ class BallBalancer:
     def angle_to_pwm(self, angle):
         angle = max(self.min_angle, min(self.max_angle, angle))
         pulse_width = (angle / 180) * 2000 + 1000
-        return int((pulse_width / 20000) * 65535)
+        return (pulse_width / 20000)
     
     def detect_ball(self, frame):
         hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
