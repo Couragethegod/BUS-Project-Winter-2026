@@ -43,13 +43,13 @@ TILT_RESPONSE_GAIN = 1.8
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
 
-TEAL_LOWER = np.array([70, 45, 35], dtype=np.uint8)
+TEAL_LOWER = np.array([90, 100, 100], dtype=np.uint8)
 TEAL_UPPER = np.array([110, 255, 255], dtype=np.uint8)
-MIN_BALL_AREA = 45
-MIN_BALL_RADIUS = 4
+MIN_BALL_AREA = 3
+MIN_BALL_RADIUS = 1
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
-PID_KP = 0.08
+PID_KP = 0.05
 PID_KI = 0.0012
 PID_KD = 0.02
 PID_INTEGRAL_LIMIT = 300.0
