@@ -1,251 +1,389 @@
-# ball_balancer_pca9685.py
-#
-# Raspberry Pi + Pi Camera + PCA9685 + 3 MG996R servos
-# Ball balancer starter code using PCA9685
+from __future__ import annotations
 
+import math
 import time
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
-from adafruit_pca9685 import PCA9685
-from picamera2 import Picamera2
-import board
-import busio
 
-# =========================
-# USER SETTINGS
-# =========================
+from PID import PIDcontroller
+from robot_kinematics import RobotKinematics
 
-# I2C address of the PCA9685 board
-PCA9685_ADDRESS = 0x40
-
-# Servo calibration in degrees (adjust as needed)
-SERVO_MIN = 40  # Minimum PWM value (usually 0)
-SERVO_MAX = 80  # Maximum PWM value (usually 180)
-
-# Camera size
-FRAME_W = 640
-FRAME_H = 480
-
-# Ball target point = center of image
-TARGET_X = FRAME_W // 2
-TARGET_Y = FRAME_H // 2
-
-# HSV threshold for the ball color
-LOWER_HSV = np.array([20, 100, 100])
-UPPER_HSV = np.array([30, 255, 255])
-
-BALL_MIN_RADIUS = 8
-DEADBAND_PX = 8
-
-# PID gains
-KP_X = 0.010
-KI_X = 0.0000
-KD_X = 0.0040
-
-KP_Y = 0.010
-KI_Y = 0.0000
-KD_Y = 0.0040
-
-# Clamp PID outputs to this range
-CTRL_LIMIT = 1.0
-INTEGRAL_LIMIT = 1000.0
-
-# Position smoothing for noisy ball measurements
-SMOOTH_ALPHA = 0.25
-
-SHOW_WINDOWS = True
+try:
+    import board
+    import busio
+    from adafruit_pca9685 import PCA9685
+    from picamera2 import Picamera2
+except ImportError as exc:  # pragma: no cover - depends on Raspberry Pi hardware libs
+    HARDWARE_IMPORT_ERROR = exc
+else:
+    HARDWARE_IMPORT_ERROR = None
 
 
-# =========================
-# HELPER FUNCTIONS
-# =========================
+FRAME_SIZE = (640, 480)
+CAMERA_FLIP = -1
+SHOW_MASK_WINDOW = True
 
-def clamp(value, low, high):
-    return max(low, min(high, value))
+SAFE_SERVO_MIN_DEG = 45.0
+SAFE_SERVO_MAX_DEG = 80.0
+SAFE_SERVO_HOME_DEG = 62.5
+PCA9685_FREQUENCY_HZ = 50
+SERVO_MIN_PULSE_US = 500
+SERVO_MAX_PULSE_US = 2500
+
+PLATFORM_HEIGHT_CM = 8.26
+MAX_PLATFORM_TILT_DEG = 8.0
+POSITION_DEADBAND_PX = 4.0
+BALL_LOST_TIMEOUT_S = 0.35
+
+# If a servo or axis moves the wrong way on your build, flip the sign to -1.0.
+CONTROL_SIGN_X = 1.0
+CONTROL_SIGN_Y = 1.0
+
+TEAL_LOWER_HSV = np.array([75, 70, 45], dtype=np.uint8)
+TEAL_UPPER_HSV = np.array([105, 255, 255], dtype=np.uint8)
+
+KINEMATICS = {
+    "lp": 7.0,
+    "l1": 10.0,
+    "l2": 9.6,
+    "lb": 7.4,
+}
 
 
-class PID:
-    def __init__(self, kp, ki, kd, out_limit=1.0, int_limit=1000.0):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.out_limit = out_limit
-        self.int_limit = int_limit
-        self.integral = 0.0
-        self.prev_error = None
+@dataclass(frozen=True)
+class ServoCalibration:
+    channel: int
+    center_deg: float = SAFE_SERVO_HOME_DEG
+    direction: float = 1.0
+    trim_deg: float = 0.0
 
-    def reset(self):
-        self.integral = 0.0
-        self.prev_error = None
 
-    def update(self, error, dt):
-        if dt <= 0:
-            return 0.0
+@dataclass
+class BallDetection:
+    center: tuple[int, int]
+    radius: float
+    area: float
 
-        self.integral += error * dt
-        self.integral = clamp(self.integral, -self.int_limit, self.int_limit)
 
-        if self.prev_error is None:
-            derivative = 0.0
-        else:
-            derivative = (error - self.prev_error) / dt
+SERVO_CALIBRATION = (
+    ServoCalibration(channel=0, center_deg=62.0),
+    ServoCalibration(channel=1, center_deg=62.5),
+    ServoCalibration(channel=2, center_deg=62.5),
+)
 
-        self.prev_error = error
 
-        output = (
-            self.kp * error +
-            self.ki * self.integral +
-            self.kd * derivative
+def clamp(value, lower, upper):
+    return max(lower, min(upper, value))
+
+
+class UnderPlatformCamera:
+    def __init__(self, resolution=FRAME_SIZE, flip=CAMERA_FLIP):
+        self.flip = flip
+        self.picam2 = Picamera2()
+        config = self.picam2.create_video_configuration(
+            main={"size": resolution, "format": "RGB888"},
+            controls={"FrameDurationLimits": (33333, 33333), "ExposureTime": 8000},
         )
-        return clamp(output, -self.out_limit, self.out_limit)
+        self.picam2.configure(config)
+        self.picam2.start()
+        time.sleep(1.0)
+
+    def capture_frame(self):
+        frame_rgb = self.picam2.capture_array()
+        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        if self.flip is not None:
+            frame_bgr = cv2.flip(frame_bgr, self.flip)
+        return frame_bgr
+
+    def close(self):
+        self.picam2.stop()
+        self.picam2.close()
 
 
-def level_platform(pwm):
-    """
-    Center the platform by setting all servos to the middle position (90 degrees).
-    """
-    for i in range(3):
-        pwm.set_pwm(i, 0, int(90 / 180 * 4095))  # Convert 90 degrees to PWM value
+class TealBallTracker:
+    def __init__(self, lower_hsv=TEAL_LOWER_HSV, upper_hsv=TEAL_UPPER_HSV):
+        self.lower_hsv = lower_hsv
+        self.upper_hsv = upper_hsv
+        self.kernel = np.ones((5, 5), dtype=np.uint8)
+
+    def detect(self, frame_bgr):
+        blurred = cv2.GaussianBlur(frame_bgr, (7, 7), 0)
+        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+        mask = cv2.inRange(hsv, self.lower_hsv, self.upper_hsv)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel, iterations=1)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel, iterations=2)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return None, mask
+
+        contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(contour)
+        if area < 180:
+            return None, mask
+
+        (x_pos, y_pos), radius = cv2.minEnclosingCircle(contour)
+        if radius < 7:
+            return None, mask
+
+        moments = cv2.moments(contour)
+        if moments["m00"]:
+            center = (
+                int(moments["m10"] / moments["m00"]),
+                int(moments["m01"] / moments["m00"]),
+            )
+        else:
+            center = (int(x_pos), int(y_pos))
+
+        return BallDetection(center=center, radius=radius, area=area), mask
 
 
-def detect_ball(frame):
-    """
-    Returns:
-        (cx, cy, radius), mask
-        or (None, mask) if no ball found
-    """
-    blurred = cv2.GaussianBlur(frame, (11, 11), 0)
-    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+class PCA9685ServoController:
+    def __init__(self, servo_calibration):
+        self.servo_calibration = servo_calibration
+        self.current_angles = [cal.center_deg for cal in self.servo_calibration]
 
-    mask = cv2.inRange(hsv, LOWER_HSV, UPPER_HSV)
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=2)
+        self.i2c = busio.I2C(board.SCL, board.SDA)
+        self.pca = PCA9685(self.i2c)
+        self.pca.frequency = PCA9685_FREQUENCY_HZ
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    def write_angles(self, angles_deg):
+        applied = []
+        for calibration, angle_deg in zip(self.servo_calibration, angles_deg):
+            safe_angle = clamp(angle_deg, SAFE_SERVO_MIN_DEG, SAFE_SERVO_MAX_DEG)
+            pulse_us = SERVO_MIN_PULSE_US + (
+                safe_angle / 180.0
+            ) * (SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US)
+            period_us = 1_000_000.0 / PCA9685_FREQUENCY_HZ
+            duty_cycle = int((pulse_us / period_us) * 65535.0)
+            self.pca.channels[calibration.channel].duty_cycle = clamp(duty_cycle, 0, 65535)
+            applied.append(safe_angle)
 
-    if not contours:
-        return None, mask
+        self.current_angles = applied
+        return tuple(applied)
 
-    c = max(contours, key=cv2.contourArea)
-    ((x, y), radius) = cv2.minEnclosingCircle(c)
-    M = cv2.moments(c)
+    def ramp_to(self, target_angles, duration=0.5, steps=25):
+        start_angles = list(self.current_angles)
+        for step in range(1, steps + 1):
+            blend = step / steps
+            interp_angles = [
+                start + ((target - start) * blend)
+                for start, target in zip(start_angles, target_angles)
+            ]
+            self.write_angles(interp_angles)
+            time.sleep(duration / steps)
 
-    if M["m00"] == 0 or radius < BALL_MIN_RADIUS:
-        return None, mask
-
-    cx = int(M["m10"] / M["m00"])
-    cy = int(M["m01"] / M["m00"])
-
-    return (cx, cy, radius), mask
-
-
-def mix_xy_to_3_servos(ux, uy):
-    """
-    Convert desired X/Y tilt into 3 servo commands.
-    Assumes servos are mechanically spaced 120 degrees apart.
-    Output range is roughly [-1, 1] before final clamp.
-    """
-    s1 = ux
-    s2 = -0.5 * ux + 0.866 * uy
-    s3 = -0.5 * ux - 0.866 * uy
-    return [s1, s2, s3]
+    def close(self):
+        for calibration in self.servo_calibration:
+            self.pca.channels[calibration.channel].duty_cycle = 0
+        self.pca.deinit()
 
 
-# =========================
-# MAIN
-# =========================
+class SmartBallBalancer:
+    def __init__(self):
+        self.camera = UnderPlatformCamera()
+        self.tracker = TealBallTracker()
+        self.kinematics = RobotKinematics(**KINEMATICS)
+        self.servos = PCA9685ServoController(SERVO_CALIBRATION)
+
+        self.pid_x = PIDcontroller(
+            kp=0.025,
+            ki=0.0009,
+            kd=0.012,
+            windup_limit=250.0,
+            output_limit=MAX_PLATFORM_TILT_DEG,
+        )
+        self.pid_y = PIDcontroller(
+            kp=0.025,
+            ki=0.0009,
+            kd=0.012,
+            windup_limit=250.0,
+            output_limit=MAX_PLATFORM_TILT_DEG,
+        )
+
+        self.home_joint_angles = self.solve_joint_angles(0.0, 0.0)
+        self.home_servo_angles = self.joint_angles_to_servo_angles(self.home_joint_angles)
+        self.servos.ramp_to(self.home_servo_angles, duration=0.6, steps=30)
+        self.last_detection_time = time.perf_counter()
+
+    def solve_joint_angles(self, tilt_deg, direction_deg):
+        self.kinematics.solve_inverse_kinematics_spherical(
+            tilt_deg,
+            direction_deg,
+            PLATFORM_HEIGHT_CM,
+        )
+        return self.kinematics.joint_angles_deg()
+
+    def joint_angles_to_servo_angles(self, joint_angles_deg):
+        servo_angles = []
+        for calibration, home_joint, joint_angle in zip(
+            SERVO_CALIBRATION,
+            self.home_joint_angles,
+            joint_angles_deg,
+        ):
+            delta_deg = joint_angle - home_joint
+            command_deg = (
+                calibration.center_deg
+                + (calibration.direction * delta_deg)
+                + calibration.trim_deg
+            )
+            servo_angles.append(command_deg)
+        return tuple(servo_angles)
+
+    def command_platform(self, tilt_deg, direction_deg):
+        safe_tilt = min(max(tilt_deg, 0.0), MAX_PLATFORM_TILT_DEG)
+        joint_angles = self.solve_joint_angles(safe_tilt, direction_deg)
+        servo_angles = self.joint_angles_to_servo_angles(joint_angles)
+        applied_angles = self.servos.write_angles(servo_angles)
+        return applied_angles, joint_angles
+
+    def control_step(self, frame_bgr):
+        target = (frame_bgr.shape[1] // 2, frame_bgr.shape[0] // 2)
+        detection, mask = self.tracker.detect(frame_bgr)
+
+        theta = 0.0
+        phi = 0.0
+        error_x = 0.0
+        error_y = 0.0
+        servo_angles = tuple(self.servos.current_angles)
+
+        if detection is not None:
+            self.last_detection_time = time.perf_counter()
+            error_x = float(target[0] - detection.center[0])
+            error_y = float(target[1] - detection.center[1])
+
+            if abs(error_x) < POSITION_DEADBAND_PX:
+                error_x = 0.0
+            if abs(error_y) < POSITION_DEADBAND_PX:
+                error_y = 0.0
+
+            tilt_x = CONTROL_SIGN_X * self.pid_x.update(error_x)
+            tilt_y = CONTROL_SIGN_Y * self.pid_y.update(error_y)
+
+            theta = min(math.hypot(tilt_x, tilt_y), MAX_PLATFORM_TILT_DEG)
+            if theta > 0.0:
+                phi = math.degrees(math.atan2(tilt_y, tilt_x)) % 360.0
+
+            servo_angles, _ = self.command_platform(theta, phi)
+        elif time.perf_counter() - self.last_detection_time > BALL_LOST_TIMEOUT_S:
+            self.pid_x.reset()
+            self.pid_y.reset()
+            servo_angles, _ = self.command_platform(0.0, 0.0)
+
+        annotated = self.draw_overlay(
+            frame_bgr,
+            detection,
+            target,
+            error_x,
+            error_y,
+            theta,
+            phi,
+            servo_angles,
+        )
+        return annotated, mask
+
+    def draw_overlay(
+        self,
+        frame_bgr,
+        detection,
+        target,
+        error_x,
+        error_y,
+        theta,
+        phi,
+        servo_angles,
+    ):
+        display = frame_bgr.copy()
+
+        cv2.drawMarker(
+            display,
+            target,
+            color=(0, 0, 255),
+            markerType=cv2.MARKER_CROSS,
+            markerSize=20,
+            thickness=2,
+        )
+
+        if detection is not None:
+            cv2.circle(display, detection.center, int(detection.radius), (0, 255, 0), 2)
+            cv2.line(display, target, detection.center, (255, 255, 255), 2)
+            status_text = "Tracking"
+        else:
+            status_text = "Searching"
+
+        cv2.putText(
+            display,
+            f"Status: {status_text}",
+            (12, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            display,
+            f"Error px: ({error_x:.1f}, {error_y:.1f})",
+            (12, 58),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            display,
+            f"Tilt: {theta:.2f} deg @ {phi:.1f} deg",
+            (12, 88),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            display,
+            f"Servos: {servo_angles[0]:.1f}, {servo_angles[1]:.1f}, {servo_angles[2]:.1f}",
+            (12, 118),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        return display
+
+    def shutdown(self):
+        try:
+            self.servos.ramp_to(self.home_servo_angles, duration=0.4, steps=20)
+        finally:
+            self.camera.close()
+            self.servos.close()
+            cv2.destroyAllWindows()
+
 
 def main():
-    # Setup I2C communication
-    i2c = busio.I2C(board.SCL, board.SDA)
-    pwm = PCA9685(i2c)
-    pwm.frequency = 60  # Set the PWM frequency for servos (typical value for servos)
+    if HARDWARE_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "This script must run on the Raspberry Pi with picamera2, board, busio, and "
+            f"adafruit_pca9685 installed. Missing dependency: {HARDWARE_IMPORT_ERROR}"
+        )
 
-    # Camera setup
-    picam2 = Picamera2()
-    config = picam2.create_preview_configuration(
-        main={"size": (FRAME_W, FRAME_H), "format": "RGB888"}
-    )
-    picam2.configure(config)
-    picam2.start()
-    time.sleep(1.0)
-
-    pid_x = PID(KP_X, KI_X, KD_X, out_limit=CTRL_LIMIT, int_limit=INTEGRAL_LIMIT)
-    pid_y = PID(KP_Y, KI_Y, KD_Y, out_limit=CTRL_LIMIT, int_limit=INTEGRAL_LIMIT)
-
-    filt_x = float(TARGET_X)
-    filt_y = float(TARGET_Y)
-
-    last_time = time.time()
+    robot = SmartBallBalancer()
 
     try:
         while True:
-            frame = picam2.capture_array("main")
-            ball, mask = detect_ball(frame)
+            frame = robot.camera.capture_frame()
+            annotated, mask = robot.control_step(frame)
 
-            now = time.time()
-            dt = now - last_time
-            last_time = now
+            cv2.imshow("Smart Ball Balancer", annotated)
+            if SHOW_MASK_WINDOW:
+                cv2.imshow("Teal Ball Mask", mask)
 
-            ux = 0.0
-            uy = 0.0
-
-            if ball is not None:
-                cx, cy, radius = ball
-
-                # Smooth the measured position
-                filt_x = SMOOTH_ALPHA * cx + (1.0 - SMOOTH_ALPHA) * filt_x
-                filt_y = SMOOTH_ALPHA * cy + (1.0 - SMOOTH_ALPHA) * filt_y
-
-                error_x = TARGET_X - filt_x
-                error_y = TARGET_Y - filt_y
-
-                # Deadband
-                if abs(error_x) < DEADBAND_PX:
-                    error_x = 0.0
-                if abs(error_y) < DEADBAND_PX:
-                    error_y = 0.0
-
-                # PID
-                ux = pid_x.update(error_x, dt)
-                uy = pid_y.update(error_y, dt)
-
-                # Convert X/Y tilt to 3 servos
-                servo_cmds = mix_xy_to_3_servos(ux, uy)
-
-                # Apply commands to the PCA9685 (map [-1, 1] to PWM range)
-                for i in range(3):
-                    pwm.set_pwm(i, 0, int((servo_cmds[i] * 90 + 90) / 180 * 4095))  # Map to PWM values
-
-            else:
-                # No ball found: level platform and reset PID
-                pid_x.reset()
-                pid_y.reset()
-                level_platform(pwm)
-
-            if SHOW_WINDOWS:
-                # Draw target center
-                cv2.line(frame, (TARGET_X - 15, TARGET_Y), (TARGET_X + 15, TARGET_Y), (255, 0, 0), 2)
-                cv2.line(frame, (TARGET_X, TARGET_Y - 15), (TARGET_X, TARGET_Y + 15), (255, 0, 0), 2)
-
-                # Status text
-                cv2.putText(frame, f"ux={ux:.2f} uy={uy:.2f}", (10, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame, "Press q to quit", (10, 55),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-                cv2.imshow("Ball Balancer", frame)
-                cv2.imshow("Mask", mask)
-
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
-
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord("q")):
+                break
     finally:
-        level_platform(pwm)
-        time.sleep(0.5)
-        picam2.stop()
-        cv2.destroyAllWindows()
+        robot.shutdown()
 
 
 if __name__ == "__main__":
