@@ -1,286 +1,157 @@
-"""
-Smart Ball Balancer Robot
-Hardware: Raspberry Pi 4B, Pi Camera 2, PCA9685, 3x MG996R servos
-Camera is mounted underneath a clear acrylic platform.
-
-Servo safe range: 45–80 degrees (mid/flat = 62 degrees)
-Servo layout: delta/tripod, evenly spaced at 120° apart
-"""
-
 import time
-import math
 import cv2
 import numpy as np
-from picamera2 import Picamera2
-import smbus2
 
-# ─────────────────────────────────────────────
-# PCA9685 I2C driver (no external libraries)
-# ─────────────────────────────────────────────
+from adafruit_pca9685 import PCA9685
+from board import SCL, SDA
+import busio
 
-PCA9685_ADDRESS  = 0x40
-MODE1_REG        = 0x00
-PRESCALE_REG     = 0xFE
-LED0_ON_L        = 0x06  # Base register; each channel adds 4
+# ---------------------------
+# PCA9685 SETUP
+# ---------------------------
+i2c = busio.I2C(SCL, SDA)
+pca = PCA9685(i2c)
+pca.frequency = 50
 
-class PCA9685:
-    def __init__(self, address=PCA9685_ADDRESS, bus=1):
-        self.bus     = smbus2.SMBus(bus)
-        self.address = address
-        # Wake the chip (clear SLEEP bit)
-        self.bus.write_byte_data(self.address, MODE1_REG, 0x00)
-        time.sleep(0.005)
-        self.set_pwm_freq(50)  # 50 Hz for servos
+SERVO_X = 0
+SERVO_Y = 1
 
-    def set_pwm_freq(self, freq_hz):
-        """Set PWM frequency (50 Hz for standard servos)."""
-        prescale = round(25_000_000 / (4096 * freq_hz)) - 1
-        old_mode = self.bus.read_byte_data(self.address, MODE1_REG)
-        # Enter sleep mode to set prescale
-        self.bus.write_byte_data(self.address, MODE1_REG, (old_mode & 0x7F) | 0x10)
-        self.bus.write_byte_data(self.address, PRESCALE_REG, prescale)
-        # Restore mode and restart
-        self.bus.write_byte_data(self.address, MODE1_REG, old_mode)
-        time.sleep(0.005)
-        self.bus.write_byte_data(self.address, MODE1_REG, old_mode | 0x80)
+MIN_ANGLE = 45
+MAX_ANGLE = 80
 
-    def set_pwm(self, channel, on, off):
-        """Write raw on/off tick values for a channel (0–4095)."""
-        base = LED0_ON_L + 4 * channel
-        self.bus.write_byte_data(self.address, base + 0, on  & 0xFF)
-        self.bus.write_byte_data(self.address, base + 1, on  >> 8)
-        self.bus.write_byte_data(self.address, base + 2, off & 0xFF)
-        self.bus.write_byte_data(self.address, base + 3, off >> 8)
-
-    def set_servo_angle(self, channel, angle_deg):
-        """
-        Convert degrees to PCA9685 ticks at 50 Hz.
-        Pulse width: 0° → ~0.5 ms, 180° → ~2.5 ms
-        """
-        # Clamp to safe mechanical range
-        angle_deg = max(SERVO_MIN_DEG, min(SERVO_MAX_DEG, angle_deg))
-
-        pulse_ms  = 0.5 + (angle_deg / 180.0) * 2.0   # 0.5–2.5 ms
-        tick      = int((pulse_ms / 20.0) * 4096)       # 20 ms period at 50 Hz
-        self.set_pwm(channel, 0, tick)
+servo_x = 62
+servo_y = 62
 
 
-# ─────────────────────────────────────────────
-# Configuration
-# ─────────────────────────────────────────────
-
-# Servo safe angle limits
-SERVO_MIN_DEG = 45
-SERVO_MAX_DEG = 80
-SERVO_MID_DEG = (SERVO_MIN_DEG + SERVO_MAX_DEG) / 2   # 62.5° → flat platform
-
-# PCA9685 channels for each servo
-SERVO_CHANNELS = [0, 1, 2]
-
-# Delta (tripod) servo arm angles relative to the platform axes.
-# Servo 0 points "away" (top of frame), then 120° spacing.
-# Adjust these if your physical layout differs.
-SERVO_ARM_ANGLES_DEG = [270, 30, 150]
-
-# Maximum tilt range in degrees (total swing from SERVO_MID)
-MAX_TILT = (SERVO_MAX_DEG - SERVO_MID_DEG)   # ~17.5°
-
-# Camera resolution
-FRAME_W = 640
-FRAME_H = 480
-
-# Setpoint: centre of the platform in pixels
-SETPOINT_X = FRAME_W // 2
-SETPOINT_Y = FRAME_H // 2
-
-# PID gains — tune these for your physical setup
-KP = 0.05
-KI = 0.001
-KD = 0.02
-
-# Yellow ball HSV range (tune with a colour picker if needed)
-HSV_LOWER = np.array([20,  80,  80])
-HSV_UPPER = np.array([35, 255, 255])
-
-# Minimum blob area (px²) to count as the ball
-MIN_BALL_AREA = 400
+def angle_to_duty(angle):
+    pulse_min = 500
+    pulse_max = 2500
+    pulse = pulse_min + (angle / 180.0) * (pulse_max - pulse_min)
+    return int(pulse * 65535 / 20000)
 
 
-# ─────────────────────────────────────────────
-# PID controller (simple, stateful)
-# ─────────────────────────────────────────────
-
-class PID:
-    def __init__(self, kp, ki, kd):
-        self.kp        = kp
-        self.ki        = ki
-        self.kd        = kd
-        self.integral  = 0.0
-        self.prev_err  = 0.0
-        self.prev_time = time.time()
-
-    def reset(self):
-        self.integral  = 0.0
-        self.prev_err  = 0.0
-        self.prev_time = time.time()
-
-    def compute(self, error):
-        now = time.time()
-        dt  = max(now - self.prev_time, 1e-4)
-
-        self.integral += error * dt
-        # Anti-windup: clamp integral contribution
-        self.integral  = max(-50, min(50, self.integral))
-
-        derivative     = (error - self.prev_err) / dt
-        output         = self.kp * error + self.ki * self.integral + self.kd * derivative
-
-        self.prev_err  = error
-        self.prev_time = now
-        return output
+def set_servo(channel, angle):
+    angle = max(MIN_ANGLE, min(MAX_ANGLE, angle))
+    pca.channels[channel].duty_cycle = angle_to_duty(angle)
 
 
-# ─────────────────────────────────────────────
-# Ball detection
-# ─────────────────────────────────────────────
+set_servo(SERVO_X, servo_x)
+set_servo(SERVO_Y, servo_y)
 
-def detect_ball(frame):
-    """
-    Detect the yellow ball using HSV colour masking.
-    Returns (cx, cy) in pixels, or None if not found.
-    """
-    hsv    = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask   = cv2.inRange(hsv, HSV_LOWER, HSV_UPPER)
+time.sleep(1)
 
-    # Clean up noise
-    mask   = cv2.erode (mask, None, iterations=2)
-    mask   = cv2.dilate(mask, None, iterations=2)
+# ---------------------------
+# CAMERA
+# ---------------------------
+cap = cv2.VideoCapture(0)
 
-    # Find contours and pick the largest one
+ret, frame = cap.read()
+h, w, _ = frame.shape
+cx = w // 2
+cy = h // 2
+
+# ---------------------------
+# YELLOW DETECTION
+# ---------------------------
+lower_yellow = np.array([20, 100, 100])
+upper_yellow = np.array([35, 255, 255])
+
+# ---------------------------
+# PID PARAMETERS (START HERE)
+# ---------------------------
+Kp = 0.015
+Ki = 0.0005
+Kd = 0.008
+
+# PID state
+integral_x = 0
+integral_y = 0
+
+prev_error_x = 0
+prev_error_y = 0
+
+prev_time = time.time()
+
+# Anti-windup limit
+INTEGRAL_LIMIT = 1000
+
+# ---------------------------
+# MAIN LOOP
+# ---------------------------
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        continue
+
+    current_time = time.time()
+    dt = current_time - prev_time
+    prev_time = current_time
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
+
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
 
-    largest = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(largest) < MIN_BALL_AREA:
-        return None
+    if contours:
+        c = max(contours, key=cv2.contourArea)
 
-    M = cv2.moments(largest)
-    if M["m00"] == 0:
-        return None
+        if cv2.contourArea(c) > 300:
+            (x, y), radius = cv2.minEnclosingCircle(c)
 
-    cx = int(M["m10"] / M["m00"])
-    cy = int(M["m01"] / M["m00"])
-    return cx, cy
+            error_x = x - cx
+            error_y = y - cy
 
+            # ---------------- PID X ----------------
+            integral_x += error_x * dt
+            integral_x = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_x))
 
-# ─────────────────────────────────────────────
-# Platform / servo geometry
-# ─────────────────────────────────────────────
+            derivative_x = (error_x - prev_error_x) / dt if dt > 0 else 0
 
-def compute_servo_angles(tilt_x, tilt_y):
-    """
-    Convert a desired X/Y platform tilt (degrees) into
-    individual servo angles using delta geometry.
+            output_x = (
+                Kp * error_x +
+                Ki * integral_x +
+                Kd * derivative_x
+            )
 
-    tilt_x: positive → platform tilts right  (ball moves right)
-    tilt_y: positive → platform tilts forward (ball moves down)
-    """
-    angles = []
-    for arm_deg in SERVO_ARM_ANGLES_DEG:
-        arm_rad = math.radians(arm_deg)
-        # Project the tilt vector onto this servo's axis
-        contribution = tilt_x * math.cos(arm_rad) + tilt_y * math.sin(arm_rad)
-        servo_angle  = SERVO_MID_DEG + contribution
-        # Clamp to safe range
-        servo_angle  = max(SERVO_MIN_DEG, min(SERVO_MAX_DEG, servo_angle))
-        angles.append(servo_angle)
-    return angles
+            prev_error_x = error_x
 
+            # ---------------- PID Y ----------------
+            integral_y += error_y * dt
+            integral_y = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_y))
 
-# ─────────────────────────────────────────────
-# Main loop
-# ─────────────────────────────────────────────
+            derivative_y = (error_y - prev_error_y) / dt if dt > 0 else 0
 
-def main():
-    print("Initialising PCA9685...")
-    pca = PCA9685()
+            output_y = (
+                Kp * error_y +
+                Ki * integral_y +
+                Kd * derivative_y
+            )
 
-    # Move all servos to flat/neutral position at startup
-    print(f"Moving to neutral position ({SERVO_MID_DEG:.1f}°)...")
-    for ch in SERVO_CHANNELS:
-        pca.set_servo_angle(ch, SERVO_MID_DEG)
-    time.sleep(1.0)
+            prev_error_y = error_y
 
-    print("Starting camera...")
-    cam = Picamera2()
-    config = cam.create_preview_configuration(
-        main={"size": (FRAME_W, FRAME_H), "format": "BGR888"}
-    )
-    cam.configure(config)
-    cam.start()
-    time.sleep(0.5)
+            # Apply (invert axis if needed)
+            servo_x -= output_x
+            servo_y += output_y
 
-    pid_x = PID(KP, KI, KD)
-    pid_y = PID(KP, KI, KD)
+            # Clamp
+            servo_x = max(MIN_ANGLE, min(MAX_ANGLE, servo_x))
+            servo_y = max(MIN_ANGLE, min(MAX_ANGLE, servo_y))
 
-    print("Running — press Ctrl+C to stop.")
-    try:
-        while True:
-            frame = cam.capture_array()
+            set_servo(SERVO_X, servo_x)
+            set_servo(SERVO_Y, servo_y)
 
-            ball_pos = detect_ball(frame)
+            # Debug draw
+            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
+            cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
 
-            if ball_pos is not None:
-                bx, by = ball_pos
+    cv2.imshow("PID Ball Balance", frame)
 
-                # Error = displacement from centre (pixels)
-                err_x =  (bx - SETPOINT_X)   # positive → ball is right of centre
-                err_y =  (by - SETPOINT_Y)   # positive → ball is below centre
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
 
-                # PID output → desired tilt (degrees)
-                tilt_x = pid_x.compute(err_x)
-                tilt_y = pid_y.compute(err_y)
-
-                # Clamp tilt to physical range
-                tilt_x = max(-MAX_TILT, min(MAX_TILT, tilt_x))
-                tilt_y = max(-MAX_TILT, min(MAX_TILT, tilt_y))
-
-                # Compute and apply servo angles
-                servo_angles = compute_servo_angles(tilt_x, tilt_y)
-                for ch, angle in zip(SERVO_CHANNELS, servo_angles):
-                    pca.set_servo_angle(ch, angle)
-
-                # Optional debug overlay
-                cv2.circle(frame, (bx, by), 10, (0, 255, 0), 2)
-                cv2.line(frame, (SETPOINT_X - 10, SETPOINT_Y),
-                                (SETPOINT_X + 10, SETPOINT_Y), (0, 0, 255), 1)
-                cv2.line(frame, (SETPOINT_X, SETPOINT_Y - 10),
-                                (SETPOINT_X, SETPOINT_Y + 10), (0, 0, 255), 1)
-
-            else:
-                # Ball not visible — return to flat and reset integrators
-                pid_x.reset()
-                pid_y.reset()
-                for ch in SERVO_CHANNELS:
-                    pca.set_servo_angle(ch, SERVO_MID_DEG)
-
-            # Uncomment to show live preview (requires a display)
-            # cv2.imshow("Ball Balancer", frame)
-            # if cv2.waitKey(1) & 0xFF == ord('q'):
-            #     break
-
-    except KeyboardInterrupt:
-        print("\nStopping — returning to neutral.")
-
-    finally:
-        for ch in SERVO_CHANNELS:
-            pca.set_servo_angle(ch, SERVO_MID_DEG)
-        time.sleep(0.5)
-        cam.stop()
-        cv2.destroyAllWindows()
-        print("Done.")
-
-
-if __name__ == "__main__":
-    main()
+cap.release()
+cv2.destroyAllWindows()
+pca.deinit()
