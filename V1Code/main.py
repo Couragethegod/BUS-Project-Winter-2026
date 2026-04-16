@@ -36,10 +36,6 @@ prev_err_y = 0
 TARGET_X = 160  # Center X (horizontal center of the frame)
 TARGET_Y = 120  # Center Y (vertical center of the frame)
 
-# ------------------ HSV RANGE FOR YELLOW ------------------
-lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
-upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
-
 # ------------------ MAIN LOOP ------------------
 while True:
     frame = picam2.capture_array()
@@ -59,16 +55,20 @@ while True:
     # Debug: Show the HSV image directly (to visualize color space)
     cv2.imshow("HSV Image", hsv)
 
-    # ------------------ MASK FOR YELLOW BALL ------------------
-    # Use the lower and upper yellow bounds to create a binary mask
-    mask_combined = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    # ------------------ DETECT YELLOW BALL ------------------
+    # Define HSV range for yellow color
+    lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
+    upper_yellow = np.array([30, 255, 255])  # Upper bound of yellow in HSV
+
+    # Create a binary mask where yellow areas are white, the rest are black
+    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Optional: Clean the mask (remove small noise)
-    mask_combined = cv2.GaussianBlur(mask_combined, (3, 3), 0)
+    mask = cv2.GaussianBlur(mask, (3, 3), 0)
 
     # ------------------ FIND CENTROID OF YELLOW AREA ------------------
     # Find all non-zero pixels in the mask
-    yellow_pixels = np.where(mask_combined > 0)
+    yellow_pixels = np.where(mask > 0)
 
     if len(yellow_pixels[0]) > 0:  # If we found yellow pixels
         # Calculate the centroid of the yellow pixels
