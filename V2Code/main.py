@@ -1,157 +1,102 @@
 import time
 import cv2
 import numpy as np
+from picamera2 import PiCamera2
+from adafruit_servokit import ServoKit
 
-from adafruit_pca9685 import PCA9685
-from board import SCL, SDA
-import busio
+# --- CONFIGURATION ---
+# Initialize PCA9685 (16 channels)
+kit = ServoKit(channels=16)
 
-# ---------------------------
-# CAMERA SETTINGS (FIXED)
-# ---------------------------
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+# Servo Limits (per user: 45 to 80 degrees)
+SERVO_MIN = 45
+SERVO_MAX = 80
+SERVO_MID = 62.5  # The "Level" position
 
-cx = FRAME_WIDTH // 2
-cy = FRAME_HEIGHT // 2
+# PID Gains (Tune these!)
+# Kp: How much to tilt based on distance from center
+# Kd: how much to "counter-tilt" based on ball speed
+Kp = 0.08 
+Kd = 0.03
 
-# ---------------------------
-# PCA9685 SETUP
-# ---------------------------
-i2c = busio.I2C(SCL, SDA)
-pca = PCA9685(i2c)
-pca.frequency = 50
-
-SERVO_X = 0
-SERVO_Y = 1
-
-MIN_ANGLE = 45
-MAX_ANGLE = 80
-
-servo_x = 62
-servo_y = 62
-
-
-def angle_to_duty(angle):
-    pulse_min = 500
-    pulse_max = 2500
-    pulse = pulse_min + (angle / 180.0) * (pulse_max - pulse_min)
-    return int(pulse * 65535 / 20000)
-
-
-def set_servo(channel, angle):
-    angle = max(MIN_ANGLE, min(MAX_ANGLE, angle))
-    pca.channels[channel].duty_cycle = angle_to_duty(angle)
-
-
-set_servo(SERVO_X, servo_x)
-set_servo(SERVO_Y, servo_y)
-
-time.sleep(1)
-
-# ---------------------------
-# CAMERA INIT
-# ---------------------------
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-if not cap.isOpened():
-    print("Camera failed")
-    exit()
-
-# ---------------------------
-# YELLOW DETECTION
-# ---------------------------
-lower_yellow = np.array([20, 100, 100])
-upper_yellow = np.array([35, 255, 255])
-
-# ---------------------------
-# PID CONSTANTS
-# ---------------------------
-Kp = 0.015
-Ki = 0.0005
-Kd = 0.008
-
-integral_x = 0
-integral_y = 0
-
+# Global variables for PID
 prev_error_x = 0
 prev_error_y = 0
 
-prev_time = time.time()
+# --- CAMERA SETUP ---
+picam2 = PiCamera2()
+# Using a lower resolution for faster processing/lower latency
+config = picam2.create_preview_configuration(main={"format": "RGB888", "size": (640, 480)})
+picam2.configure(config)
+picam2.start()
 
-INTEGRAL_LIMIT = 1000
+def move_servos(tilt_x, tilt_y):
+    """
+    Translates X/Y tilt into 3 servo angles for 120-degree spacing.
+    tilt_x/y are the PID outputs.
+    """
+    # 120-degree geometry mixing logic
+    # Servo 0: Rear center
+    # Servo 1: Front right
+    # Servo 2: Front left
+    s0 = SERVO_MID + tilt_y
+    s1 = SERVO_MID - (0.5 * tilt_y) + (0.866 * tilt_x)
+    s2 = SERVO_MID - (0.5 * tilt_y) - (0.866 * tilt_x)
 
-# ---------------------------
-# LOOP
-# ---------------------------
-while True:
-    ret, frame = cap.read()
+    # Apply hardware limits and update servos
+    kit.servo[0].angle = max(SERVO_MIN, min(SERVO_MAX, s0))
+    kit.servo[1].angle = max(SERVO_MIN, min(SERVO_MAX, s1))
+    kit.servo[2].angle = max(SERVO_MIN, min(SERVO_MAX, s2))
 
-    if not ret or frame is None:
-        continue
+try:
+    print("Leveling platform...")
+    move_servos(0, 0)
+    time.sleep(2)
 
-    current_time = time.time()
-    dt = current_time - prev_time
-    prev_time = current_time
+    while True:
+        # 1. Capture frame
+        frame = picam2.capture_array()
+        
+        # 2. Process for Yellow (HSV Space)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_RGB2HSV)
+        # Typical Yellow Range (adjust if lighting is weird)
+        lower_yellow = np.array([20, 100, 100])
+        upper_yellow = np.array([35, 255, 255])
+        
+        mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+        if contours:
+            # Find the largest yellow object
+            c = max(contours, key=cv2.contourArea)
+            ((x, y), radius) = cv2.minEnclosingCircle(c)
 
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=2)
+            if radius > 10:
+                # 3. PID Logic
+                # Center of 640x480 is 320, 240
+                error_x = x - 320
+                error_y = y - 240
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                # Calculate change in error (Derivative)
+                dx = error_x - prev_error_x
+                dy = error_y - prev_error_y
 
-    if contours:
-        c = max(contours, key=cv2.contourArea)
+                # Final Tilt Output
+                # Note: Because camera is UNDERNEATH, you may need to 
+                # flip the signs (e.g., -error_x) if it tilts the wrong way.
+                output_x = (error_x * Kp) + (dx * Kd)
+                output_y = (error_y * Kp) + (dy * Kd)
 
-        if cv2.contourArea(c) > 300:
-            (x, y), radius = cv2.minEnclosingCircle(c)
+                move_servos(output_x, output_y)
 
-            error_x = x - cx
-            error_y = y - cy
+                prev_error_x = error_x
+                prev_error_y = error_y
+        else:
+            # Ball lost: Return to level
+            move_servos(0, 0)
 
-            # PID X
-            integral_x += error_x * dt
-            integral_x = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_x))
-
-            derivative_x = (error_x - prev_error_x) / dt if dt > 0 else 0
-
-            output_x = Kp * error_x + Ki * integral_x + Kd * derivative_x
-            prev_error_x = error_x
-
-            # PID Y
-            integral_y += error_y * dt
-            integral_y = max(-INTEGRAL_LIMIT, min(INTEGRAL_LIMIT, integral_y))
-
-            derivative_y = (error_y - prev_error_y) / dt if dt > 0 else 0
-
-            output_y = Kp * error_y + Ki * integral_y + Kd * derivative_y
-            prev_error_y = error_y
-
-            # Apply
-            servo_x -= output_x
-            servo_y += output_y
-
-            # Clamp
-            servo_x = max(MIN_ANGLE, min(MAX_ANGLE, servo_x))
-            servo_y = max(MIN_ANGLE, min(MAX_ANGLE, servo_y))
-
-            set_servo(SERVO_X, servo_x)
-            set_servo(SERVO_Y, servo_y)
-
-            # Debug visuals
-            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 255), 2)
-            cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
-
-    cv2.imshow("PID Balance", frame)
-
-    if cv2.waitKey(1) & 0xFF == 27:
-        break
-
-cap.release()
-cv2.destroyAllWindows()
-pca.deinit()
+except KeyboardInterrupt:
+    print("Shutting down...")
+finally:
+    move_servos(0, 0)
+    picam2.stop()
