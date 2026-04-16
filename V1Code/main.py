@@ -39,33 +39,23 @@ while True:
     frame = picam2.capture_array()
 
     # Convert to HSV
-    frame = picam2.capture_array()
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-# ---------------- NEW DETECTION ----------------
-    frame_small = cv2.resize(frame, (320, 240))
+    # -------- YELLOW DETECTION --------
+    # These ranges are a GOOD starting point (not perfect)
+    lower_yellow = np.array([20, 100, 100])
+    upper_yellow = np.array([35, 255, 255])
 
-    lab = cv2.cvtColor(frame_small, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
+    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    l = clahe.apply(l)
-
-    lab = cv2.merge((l, a, b))
-    frame_norm = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-    lab = cv2.cvtColor(frame_norm, cv2.COLOR_BGR2LAB)
-    _, _, b_channel = cv2.split(lab)
-
-    _, mask = cv2.threshold(b_channel, 150, 255, cv2.THRESH_BINARY)
-
+    # Clean noise
     mask = cv2.GaussianBlur(mask, (5, 5), 0)
     mask = cv2.erode(mask, None, iterations=1)
     mask = cv2.dilate(mask, None, iterations=2)
 
+    # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    ball_found = False
-# ------------------------------------------------
     if contours:
         c = max(contours, key=cv2.contourArea)
         (x, y), r = cv2.minEnclosingCircle(c)
