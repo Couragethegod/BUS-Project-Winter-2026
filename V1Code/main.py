@@ -7,7 +7,7 @@ from adafruit_servokit import ServoKit
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
-SERVO_MIN = 45
+SERVO_MIN = 30
 SERVO_MAX = 80
 SERVO_NEUTRAL = 62  # adjust this to your platform level
 
@@ -49,7 +49,7 @@ while True:
     mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Clean noise
-    mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    mask = cv2.GaussianBlur(mask, (3, 3), 0)
     mask = cv2.erode(mask, None, iterations=1)
     mask = cv2.dilate(mask, None, iterations=2)
 
