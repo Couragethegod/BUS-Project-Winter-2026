@@ -7,7 +7,7 @@ from adafruit_servokit import ServoKit
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
-SERVO_IDS = [0, 1, 2]  # change if needed
+SERVO_IDS = [2, 0, 1]  # change if needed
 SERVO_MIN = 45
 SERVO_MAX = 80
 SERVO_NEUTRAL = 60
@@ -20,8 +20,8 @@ for s in SERVO_IDS:
     kit.servo[s].angle = SERVO_NEUTRAL
 
 # ------------------ PID PARAMETERS ------------------
-Kp = 0.08
-Ki = 0.0005
+Kp = 0.05
+Ki = 0.0003
 Kd = 0.03
 
 integral_x = 0
@@ -42,8 +42,8 @@ while True:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Yellow ball mask (you may need to tune this)
-    lower_yellow = np.array([20, 100, 100])
-    upper_yellow = np.array([35, 255, 255])
+    lower_yellow = np.array([90, 100, 100])
+    upper_yellow = np.array([110, 255, 255])
     mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
     # Find contours
