@@ -38,8 +38,20 @@ TARGET_Y = 120
 while True:
     frame = picam2.capture_array()
 
-    # Convert to HSV
+    # Make sure we're working with the correct color format
+    print("Frame shape:", frame.shape)  # Debug to check frame format and dimensions
+
+    # Check if the frame is in BGR format
+    if frame.shape[2] == 3:
+        print("Frame is in BGR format.")  # This is expected for standard color images
+    else:
+        print("Frame format is incorrect, possible issues with camera settings.")
+
+    # Convert to HSV (check for any issues with color conversion)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+    # Debug: Show the HSV image directly (so we can see the conversion result)
+    cv2.imshow("HSV Image", hsv)
 
     # Detect yellow ball (corrected HSV range for yellow)
     lower_yellow = np.array([20, 100, 100])  # Lower bound of yellow in HSV
