@@ -43,8 +43,8 @@ while True:
 
     # -------- YELLOW DETECTION --------
     # These ranges are a GOOD starting point (not perfect)
-    lower_yellow = np.array([20, 100, 100])
-    upper_yellow = np.array([35, 255, 255])
+    lower_yellow = np.array([75, 80, 80])
+    upper_yellow = np.array([105, 255, 255])
 
     mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
 
@@ -53,6 +53,8 @@ while True:
     mask = cv2.erode(mask, None, iterations=1)
     mask = cv2.dilate(mask, None, iterations=2)
 
+    cv2.imshow("Mask", mask)
+    
     # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
