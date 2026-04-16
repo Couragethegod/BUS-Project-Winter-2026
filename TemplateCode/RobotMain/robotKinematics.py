@@ -4,7 +4,7 @@ import numpy as np
 
 class RobotKinematics:
 
-    def __init__(self, lp=7.125, l1=6.20, l2=4.50, lb=4.00, invert=False):
+    def __init__(self, lp=7.0, l1=10, l2=9.6, lb=7.40, invert=False):
 
         self.lp = lp    #Radius of Top
         self.l1 = l1    #Top Arm
