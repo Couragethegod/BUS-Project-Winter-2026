@@ -70,44 +70,49 @@ while True:
     mask_eroded = cv2.erode(mask_combined, None, iterations=1)
     mask_dilated = cv2.dilate(mask_eroded, None, iterations=1)
 
-    # ------------------ FIND CENTROID OF YELLOW AREA ------------------
-    # Find all non-zero pixels in the mask
-    yellow_pixels = np.where(mask_dilated > 0)
+    # ------------------ FIND CONTOURS (BALL DETECTION) ------------------
+    contours, _ = cv2.findContours(mask_dilated.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    if len(yellow_pixels[0]) > 0:  # If we found yellow pixels
-        # Calculate the centroid of the yellow pixels
-        centroid_x = int(np.mean(yellow_pixels[1]))  # X coordinates (column index)
-        centroid_y = int(np.mean(yellow_pixels[0]))  # Y coordinates (row index)
+    if contours:
+        # Find the largest contour by area (most likely the yellow ball)
+        c = max(contours, key=cv2.contourArea)
 
-        # Draw a circle at the centroid of the detected yellow area
-        cv2.circle(frame, (centroid_x, centroid_y), 5, (0, 255, 0), -1)  # Green dot
+        # Get the minimum enclosing circle for the contour
+        (x, y), r = cv2.minEnclosingCircle(c)
+        r = int(r)
 
-        # ------------------ PID CONTROL ------------------
-        err_x = centroid_x - TARGET_X  # Error in X direction
-        err_y = centroid_y - TARGET_Y  # Error in Y direction
+        if r > 0.5:  # Only consider if the radius is large enough to be a valid detection
+            x, y = int(x), int(y)
 
-        # Derivative of error
-        d_err_x = err_x - prev_err_x
-        d_err_y = err_y - prev_err_y
+            # Draw the circle around the detected yellow ball
+            cv2.circle(frame, (x, y), r, (0, 255, 0), 2)  # Green circle for ball
 
-        # PID control calculation for X and Y movements
-        control_x = kp * err_x + kd * d_err_x
-        control_y = kp * err_y + kd * d_err_y
+            # ------------------ PID CONTROL ------------------
+            err_x = x - TARGET_X  # Error in X direction
+            err_y = y - TARGET_Y  # Error in Y direction
 
-        # Update previous errors
-        prev_err_x = err_x
-        prev_err_y = err_y
+            # Derivative of error
+            d_err_x = err_x - prev_err_x
+            d_err_y = err_y - prev_err_y
 
-        # ------------------ SERVO MIXING ------------------
-        s1 = SERVO_NEUTRAL + control_x
-        s2 = SERVO_NEUTRAL - control_x / 2 + control_y
-        s3 = SERVO_NEUTRAL - control_x / 2 - control_y
+            # PID control calculation for X and Y movements
+            control_x = kp * err_x + kd * d_err_x
+            control_y = kp * err_y + kd * d_err_y
 
-        # Set servo positions
-        set_servos(s1, s2, s3)
+            # Update previous errors
+            prev_err_x = err_x
+            prev_err_y = err_y
 
-        # Debug: Draw target center on the frame
-        cv2.circle(frame, (TARGET_X, TARGET_Y), 5, (0, 0, 255), -1)  # Red dot for target center
+            # ------------------ SERVO MIXING ------------------
+            s1 = SERVO_NEUTRAL + control_x
+            s2 = SERVO_NEUTRAL - control_x / 2 + control_y
+            s3 = SERVO_NEUTRAL - control_x / 2 - control_y
+
+            # Set servo positions
+            set_servos(s1, s2, s3)
+
+            # Debug: Draw target center on the frame
+            cv2.circle(frame, (TARGET_X, TARGET_Y), 5, (0, 0, 255), -1)  # Red dot for target center
 
     # ------------------ DISPLAY ------------------
     # Show the frame with detected yellow ball and target
