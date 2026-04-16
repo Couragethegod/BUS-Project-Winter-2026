@@ -5,6 +5,8 @@ from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
 
 # ------------------ SERVO SETUP ------------------
+prev_time = time.time()
+
 kit = ServoKit(channels=16)
 
 SERVO_MIN = 45
@@ -71,8 +73,12 @@ while True:
             err_x = x - TARGET_X
             err_y = y - TARGET_Y
 
-            d_err_x = err_x - prev_err_x
-            d_err_y = err_y - prev_err_y
+            current_time = time.time()
+            dt = current_time - prev_time
+            prev_time = current_time
+
+            d_err_x = (err_x - prev_err_x) / dt if dt > 0 else 0
+            d_err_y = (err_y - prev_err_y) / dt if dt > 0 else 0
 
             control_x = kp * err_x + kd * d_err_x
             control_y = kp * err_y + kd * d_err_y
