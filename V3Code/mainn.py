@@ -109,7 +109,7 @@ while True:
         # PID output = tilt
         tx = pid_x.compute(error_x, dt)
         ty = pid_y.compute(error_y, dt)
-        
+
         tx = max(-10, min(10, tx))
         ty = max(-10, min(10, ty))
 
@@ -126,7 +126,6 @@ while True:
         if abs(error_y) < 10:
             error_y = 0
 
-
         # inverse kinematics
         angles = platform_to_servos(tx, ty)
 
@@ -139,7 +138,20 @@ while True:
 
     cv2.imshow("Ball Tracking", frame)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord('q'):
+
+        # smooth move to 35
+        for angle in range(60, 34, -1):
+            for i in SERVO_IDS:
+                kit.servo[i].angle = angle
+            time.sleep(0.02)
+
+        # cut power
+        for i in SERVO_IDS:
+            kit.servo[i].angle = None
+
         break
 
 cv2.destroyAllWindows()
