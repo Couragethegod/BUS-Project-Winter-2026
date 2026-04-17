@@ -50,8 +50,8 @@ MIN_BALL_RADIUS = 1
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
 PID_KP = 0.05
-PID_KI = 0.0012
-PID_KD = 0.02
+PID_KI = 0.0014
+PID_KD = 0.035
 PID_INTEGRAL_LIMIT = 300.0
 
 
