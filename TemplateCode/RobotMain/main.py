@@ -14,9 +14,7 @@ latest_frame = np.zeros((200, 150, 3), dtype=np.uint8)
 lock = threading.Lock()
 running = True
 
-kp = 0.015
-ki = 0.0
-kd = 0.00865
+
 
 
 
@@ -54,7 +52,7 @@ def capture():
             latest_frame = frame 
 
 def process():
-    hz = 50
+    hz = 60
     global latest_frame, x, y
     while True:
         with lock:
@@ -79,7 +77,7 @@ def update_robot_pos(robotcontroller, robotkinematics, pidcontroller, x_t, y_t, 
     theta, phi = pidcontroller.pid((x_t, y_t), (x, y))
     #print(theta, phi)
     #robotcontroller.Goto_time_spherical(theta, phi, 8.26, 0.02)
-    robotcontroller.Goto_N_time_spherical(theta, phi, 8.26)
+    #robotcontroller.Goto_N_time_spherical(theta, phi, 8.26)
 
 
 

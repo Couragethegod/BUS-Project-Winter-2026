@@ -17,10 +17,10 @@ from robot_kinematics import RobotKinematics
 W, H = 640, 480
 SERVO_CH = [0, 2, 1]
 SERVO_HOME = [62.5, 62.5, 62.5]
-SERVO_MIN, SERVO_MAX = 45.0, 80.0
+SERVO_MIN, SERVO_MAX = 40.0, 80.0
 PULSE_MIN, PULSE_MAX = 500, 2500
 HEIGHT, MAX_TILT, ARM_GAIN = 8.26, 6.0, 1.8
-LOWER = np.array([70, 45, 35], dtype=np.uint8)
+LOWER = np.array([90, 100, 100], dtype=np.uint8)
 UPPER = np.array([110, 255, 255], dtype=np.uint8)
 SIGN_X, SIGN_Y = 1.0, 1.0
 
@@ -71,8 +71,8 @@ def main():
     model.solve_inverse_kinematics_spherical(0, 0, HEIGHT)
     home_joints = model.joint_angles_deg()
     angles = set_all(pca, SERVO_HOME)
-    pid_x = PIDcontroller(0.04, 0.0008, 0.008, integral_limit=200, output_limit=MAX_TILT)
-    pid_y = PIDcontroller(0.04, 0.0008, 0.008, integral_limit=200, output_limit=MAX_TILT)
+    pid_x = PIDcontroller(0.06, 0.0008, 0.01, integral_limit=200, output_limit=MAX_TILT)
+    pid_y = PIDcontroller(0.06, 0.0008, 0.01, integral_limit=200, output_limit=MAX_TILT)
     fx = fy = None
 
     try:

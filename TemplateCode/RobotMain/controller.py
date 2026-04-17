@@ -33,10 +33,10 @@ class RobotController:
         # Start at a neutral mid-point (e.g., 60)
         self.set_motor_angles(60, 60, 60)
         # Move to the new minimum "bottom" position (45) instead of the old 19
-        self.interpolate_time([45, 45, 45], duration=0.25)
+        # self.interpolate_time([45, 45, 45], duration=0.25)
         time.sleep(1)
         # Move to the working height (8.26)
-        self.Goto_time_spherical(0, 0, 8.26, t=0.25)
+        #self.Goto_time_spherical(0, 0, 8.26, t=0.25)
         time.sleep(1)
         print("Initialized!")
     
