@@ -27,7 +27,7 @@ SERVO_CHANNELS = [0, 2, 1]
 SERVO_CENTER_ANGLES = [62.5, 62.5, 62.5]
 SERVO_DIRECTIONS = [1.0, 1.0, 1.0]
 SERVO_TRIMS = [0.0, 0.0, 0.0]
-SERVO_MOTION_GAIN = 3.0
+SERVO_MOTION_GAIN = 1.8
 
 SAFE_SERVO_MIN = 45.0
 SAFE_SERVO_MAX = 80.0
@@ -36,12 +36,14 @@ SERVO_MIN_PULSE_US = 500
 SERVO_MAX_PULSE_US = 2500
 
 PLATFORM_HEIGHT = 8.26
-MAX_TILT = 10.0
-POSITION_DEADBAND = 3.0
-CENTER_TARGET_RADIUS = 18.0
-MIN_CENTERING_TILT = 2.5
+MAX_TILT = 7.0
+POSITION_DEADBAND = 4.0
+CENTER_TARGET_RADIUS = 24.0
+MIN_CENTERING_TILT = 0.8
 BALL_LOST_TIMEOUT = 0.35
-TILT_RESPONSE_GAIN = 1.8
+TILT_RESPONSE_GAIN = 1.0
+BALL_POSITION_FILTER_ALPHA = 0.25
+MAX_TILT_STEP = 0.35
 
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
@@ -52,17 +54,18 @@ MIN_BALL_AREA = 40
 MIN_BALL_RADIUS = 4
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
-PID_KP = 0.08
-PID_KI = 0.0015
-PID_KD = 0.015
-"""PID_KP = 0.08
-PID_KI = 0.0015
-PID_KD = 0.015"""
-PID_INTEGRAL_LIMIT = 300.0
+PID_KP = 0.045
+PID_KI = 0.0008
+PID_KD = 0.008
+PID_INTEGRAL_LIMIT = 220.0
 
 
 def clamp(value, lower, upper):
     return max(lower, min(upper, value))
+
+
+def slew_limit(target, current, max_step):
+    return current + clamp(target - current, -max_step, max_step)
 
 
 def setup_camera():
@@ -222,6 +225,10 @@ def main():
     )
     current_servo_angles = set_all_servos(pca, home_servo_angles)
     last_ball_time = time.perf_counter()
+    filtered_ball_x = None
+    filtered_ball_y = None
+    current_tilt_x = 0.0
+    current_tilt_y = 0.0
 
     try:
         while True:
@@ -239,8 +246,21 @@ def main():
                 last_ball_time = time.perf_counter()
                 ball_x, ball_y, _, _ = ball
 
-                error_x = float(target[0] - ball_x)
-                error_y = float(target[1] - ball_y)
+                if filtered_ball_x is None or filtered_ball_y is None:
+                    filtered_ball_x = float(ball_x)
+                    filtered_ball_y = float(ball_y)
+                else:
+                    filtered_ball_x = (
+                        BALL_POSITION_FILTER_ALPHA * ball_x
+                        + (1.0 - BALL_POSITION_FILTER_ALPHA) * filtered_ball_x
+                    )
+                    filtered_ball_y = (
+                        BALL_POSITION_FILTER_ALPHA * ball_y
+                        + (1.0 - BALL_POSITION_FILTER_ALPHA) * filtered_ball_y
+                    )
+
+                error_x = float(target[0] - filtered_ball_x)
+                error_y = float(target[1] - filtered_ball_y)
 
                 if abs(error_x) < POSITION_DEADBAND:
                     error_x = 0.0
@@ -248,14 +268,21 @@ def main():
                     error_y = 0.0
 
                 distance_error = math.hypot(error_x, error_y)
-                tilt_x = CONTROL_SIGN_X * TILT_RESPONSE_GAIN * pid_x.update(error_x)
-                tilt_y = CONTROL_SIGN_Y * TILT_RESPONSE_GAIN * pid_y.update(error_y)
+                target_tilt_x = CONTROL_SIGN_X * TILT_RESPONSE_GAIN * pid_x.update(error_x)
+                target_tilt_y = CONTROL_SIGN_Y * TILT_RESPONSE_GAIN * pid_y.update(error_y)
 
-                theta = min(math.hypot(tilt_x, tilt_y), MAX_TILT)
+                tilt_magnitude = math.hypot(target_tilt_x, target_tilt_y)
+                if distance_error > CENTER_TARGET_RADIUS and 0.0 < tilt_magnitude < MIN_CENTERING_TILT:
+                    scale = MIN_CENTERING_TILT / tilt_magnitude
+                    target_tilt_x *= scale
+                    target_tilt_y *= scale
+
+                current_tilt_x = slew_limit(target_tilt_x, current_tilt_x, MAX_TILT_STEP)
+                current_tilt_y = slew_limit(target_tilt_y, current_tilt_y, MAX_TILT_STEP)
+
+                theta = min(math.hypot(current_tilt_x, current_tilt_y), MAX_TILT)
                 if theta > 0.0:
-                    phi = math.degrees(math.atan2(tilt_y, tilt_x)) % 360.0
-                    if distance_error > CENTER_TARGET_RADIUS:
-                        theta = max(theta, MIN_CENTERING_TILT)
+                    phi = math.degrees(math.atan2(current_tilt_y, current_tilt_x)) % 360.0
 
                 try:
                     target_servo_angles = platform_to_servo_angles(model, home_joint_angles, theta, phi)
@@ -263,6 +290,8 @@ def main():
                 except ValueError:
                     pid_x.reset()
                     pid_y.reset()
+                    current_tilt_x = 0.0
+                    current_tilt_y = 0.0
                     current_servo_angles = set_all_servos(pca, home_servo_angles)
                     theta = 0.0
                     phi = 0.0
@@ -270,6 +299,10 @@ def main():
             elif time.perf_counter() - last_ball_time > BALL_LOST_TIMEOUT:
                 pid_x.reset()
                 pid_y.reset()
+                filtered_ball_x = None
+                filtered_ball_y = None
+                current_tilt_x = slew_limit(0.0, current_tilt_x, MAX_TILT_STEP)
+                current_tilt_y = slew_limit(0.0, current_tilt_y, MAX_TILT_STEP)
                 current_servo_angles = set_all_servos(pca, home_servo_angles)
 
             display = draw_overlay(frame, target, ball, error_x, error_y, distance_error, theta, phi, current_servo_angles)
