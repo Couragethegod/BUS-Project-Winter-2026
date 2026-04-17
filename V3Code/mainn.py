@@ -30,8 +30,8 @@ class PID:
         self.prev_error = error
         return self.kp * error + self.ki * self.integral + self.kd * derivative
 
-pid_x = PID(0.03, 0.000, 0.02)
-pid_y = PID(0.03, 0.000, 0.02)
+pid_x = PID(0.03, 0.002, 0.02)
+pid_y = PID(0.03, 0.002, 0.02)
 
 # ------------------ INVERSE KINEMATICS ------------------
 def platform_to_servos(tx, ty):
@@ -109,6 +109,23 @@ while True:
         # PID output = tilt
         tx = pid_x.compute(error_x, dt)
         ty = pid_y.compute(error_y, dt)
+        
+        tx = max(-10, min(10, tx))
+        ty = max(-10, min(10, ty))
+
+        min_tilt = 1.5
+
+        if 0 < abs(tx) < min_tilt:
+            tx = min_tilt * np.sign(tx)
+
+        if 0 < abs(ty) < min_tilt:
+            ty = min_tilt * np.sign(ty)
+
+        if abs(error_x) < 10:
+            error_x = 0
+        if abs(error_y) < 10:
+            error_y = 0
+
 
         # inverse kinematics
         angles = platform_to_servos(tx, ty)
