@@ -17,12 +17,16 @@ from robot_kinematics import RobotKinematics
 W, H = 640, 480
 SERVO_CH = [0, 2, 1]
 SERVO_HOME = [62.5, 62.5, 62.5]
-SERVO_MIN, SERVO_MAX = 40.0, 80.0
+SERVO_MIN, SERVO_MAX = 45.0, 80.0
 PULSE_MIN, PULSE_MAX = 500, 2500
-HEIGHT, MAX_TILT, ARM_GAIN = 8.26, 6.0, 1.8
+HEIGHT, MAX_TILT, ARM_GAIN = 8.26, 8.0, 2.6
 LOWER = np.array([90, 100, 100], dtype=np.uint8)
 UPPER = np.array([110, 255, 255], dtype=np.uint8)
 SIGN_X, SIGN_Y = 1.0, 1.0
+BALL_FILTER_ALPHA = 0.5
+SERVO_TARGET_BLEND = 0.6
+PID_KP, PID_KI, PID_KD = 0.06, 0.0008, 0.01
+PID_INTEGRAL_LIMIT = 200
 
 
 def clamp(x, a, b):
@@ -71,8 +75,8 @@ def main():
     model.solve_inverse_kinematics_spherical(0, 0, HEIGHT)
     home_joints = model.joint_angles_deg()
     angles = set_all(pca, SERVO_HOME)
-    pid_x = PIDcontroller(0.06, 0.0008, 0.01, integral_limit=200, output_limit=MAX_TILT)
-    pid_y = PIDcontroller(0.06, 0.0008, 0.01, integral_limit=200, output_limit=MAX_TILT)
+    pid_x = PIDcontroller(PID_KP, PID_KI, PID_KD, integral_limit=PID_INTEGRAL_LIMIT, output_limit=MAX_TILT)
+    pid_y = PIDcontroller(PID_KP, PID_KI, PID_KD, integral_limit=PID_INTEGRAL_LIMIT, output_limit=MAX_TILT)
     fx = fy = None
 
     try:
@@ -84,8 +88,8 @@ def main():
 
             if ball:
                 x, y, r = ball
-                fx = x if fx is None else 0.25 * x + 0.75 * fx
-                fy = y if fy is None else 0.25 * y + 0.75 * fy
+                fx = x if fx is None else BALL_FILTER_ALPHA * x + (1.0 - BALL_FILTER_ALPHA) * fx
+                fy = y if fy is None else BALL_FILTER_ALPHA * y + (1.0 - BALL_FILTER_ALPHA) * fy
                 ex, ey = cx - fx, cy - fy
                 tilt_x = SIGN_X * pid_x.update(ex)
                 tilt_y = SIGN_Y * pid_y.update(ey)
@@ -94,7 +98,7 @@ def main():
                 model.solve_inverse_kinematics_spherical(theta, phi, HEIGHT)
                 joints = model.joint_angles_deg()
                 target = [SERVO_HOME[i] + (joints[i] - home_joints[i]) * ARM_GAIN for i in range(3)]
-                angles = set_all(pca, [0.35 * t + 0.65 * a for t, a in zip(target, angles)])
+                angles = set_all(pca, [SERVO_TARGET_BLEND * t + (1.0 - SERVO_TARGET_BLEND) * a for t, a in zip(target, angles)])
                 cv2.circle(frame, (x, y), int(r), (0, 255, 0), 2)
                 cv2.line(frame, (cx, cy), (int(fx), int(fy)), (255, 255, 255), 2)
             else:
