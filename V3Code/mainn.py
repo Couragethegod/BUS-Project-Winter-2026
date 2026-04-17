@@ -30,8 +30,8 @@ class PID:
         self.prev_error = error
         return self.kp * error + self.ki * self.integral + self.kd * derivative
 
-pid_x = PID(0.03, 0.002, 0.02)
-pid_y = PID(0.03, 0.002, 0.02)
+pid_x = PID(0.03, 0.003, 0.02)
+pid_y = PID(0.03, 0.003, 0.02)
 
 # ------------------ INVERSE KINEMATICS ------------------
 def platform_to_servos(tx, ty):
