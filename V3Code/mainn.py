@@ -7,7 +7,7 @@ from adafruit_servokit import ServoKit
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
-SERVO_IDS = [0, 2, 1]
+SERVO_IDS = [2, 0, 1]
 SERVO_MIN = 45
 SERVO_MAX = 80
 SERVO_NEUTRAL = 60
