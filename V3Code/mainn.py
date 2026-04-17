@@ -30,8 +30,8 @@ class PID:
         self.prev_error = error
         return self.kp * error + self.ki * self.integral + self.kd * derivative
 
-pid_x = PID(0.05, 0.000, 0.01)
-pid_y = PID(0.05, 0.000, 0.01)
+pid_x = PID(0.03, 0.000, 0.02)
+pid_y = PID(0.03, 0.000, 0.02)
 
 # ------------------ INVERSE KINEMATICS ------------------
 def platform_to_servos(tx, ty):
@@ -58,13 +58,16 @@ picam2.start()
 
 # ------------------ BALL DETECTION ------------------
 def detect_ball(frame):
+    frame = cv2.GaussianBlur(frame, (5,5), 0)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # teal color range (adjust if needed)
-    lower = np.array([90, 100, 100])
-    upper = np.array([110, 255, 255])
+    # yellow range
+    lower = np.array([20, 100, 100])
+    upper = np.array([35, 255, 255])
 
     mask = cv2.inRange(hsv, lower, upper)
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
