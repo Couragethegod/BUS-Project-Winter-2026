@@ -27,6 +27,7 @@ SERVO_CHANNELS = [0, 2, 1]
 SERVO_CENTER_ANGLES = [62.5, 62.5, 62.5]
 SERVO_DIRECTIONS = [1.0, 1.0, 1.0]
 SERVO_TRIMS = [0.0, 0.0, 0.0]
+SERVO_MOTION_GAIN = 3.0
 
 SAFE_SERVO_MIN = 45.0
 SAFE_SERVO_MAX = 80.0
@@ -37,8 +38,10 @@ SERVO_MAX_PULSE_US = 2500
 PLATFORM_HEIGHT = 8.26
 MAX_TILT = 10.0
 POSITION_DEADBAND = 3.0
+CENTER_TARGET_RADIUS = 18.0
+MIN_CENTERING_TILT = 2.5
 BALL_LOST_TIMEOUT = 0.35
-TILT_RESPONSE_GAIN = 1.2
+TILT_RESPONSE_GAIN = 1.8
 
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
@@ -49,9 +52,12 @@ MIN_BALL_AREA = 40
 MIN_BALL_RADIUS = 4
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
-PID_KP = 0.05
-PID_KI = 0.0001
-PID_KD = 0.035
+PID_KP = 0.08
+PID_KI = 0.0015
+PID_KD = 0.015
+"""PID_KP = 0.08
+PID_KI = 0.0015
+PID_KD = 0.015"""
 PID_INTEGRAL_LIMIT = 300.0
 
 
@@ -148,7 +154,7 @@ def platform_to_servo_angles(model, home_joint_angles, tilt_deg, direction_deg):
         joint_change = joint_angles[index] - home_joint_angles[index]
         servo_angle = (
             SERVO_CENTER_ANGLES[index]
-            + SERVO_DIRECTIONS[index] * joint_change
+            + SERVO_DIRECTIONS[index] * joint_change * SERVO_MOTION_GAIN
             + SERVO_TRIMS[index]
         )
         servo_angles.append(servo_angle)
@@ -156,7 +162,7 @@ def platform_to_servo_angles(model, home_joint_angles, tilt_deg, direction_deg):
     return tuple(servo_angles)
 
 
-def draw_overlay(frame, target, ball, error_x, error_y, theta, phi, servo_angles):
+def draw_overlay(frame, target, ball, error_x, error_y, distance_error, theta, phi, servo_angles):
     display = frame.copy()
 
     cv2.drawMarker(
@@ -191,6 +197,7 @@ def draw_overlay(frame, target, ball, error_x, error_y, theta, phi, servo_angles
         2,
     )
     cv2.putText(display, f"Ball area: {area:.0f}  radius: {radius:.1f}", (12, 148), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.putText(display, f"Distance from center: {distance_error:.1f}px", (12, 178), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return display
 
 
@@ -224,6 +231,7 @@ def main():
 
             error_x = 0.0
             error_y = 0.0
+            distance_error = 0.0
             theta = 0.0
             phi = 0.0
 
@@ -239,12 +247,15 @@ def main():
                 if abs(error_y) < POSITION_DEADBAND:
                     error_y = 0.0
 
+                distance_error = math.hypot(error_x, error_y)
                 tilt_x = CONTROL_SIGN_X * TILT_RESPONSE_GAIN * pid_x.update(error_x)
                 tilt_y = CONTROL_SIGN_Y * TILT_RESPONSE_GAIN * pid_y.update(error_y)
 
                 theta = min(math.hypot(tilt_x, tilt_y), MAX_TILT)
                 if theta > 0.0:
                     phi = math.degrees(math.atan2(tilt_y, tilt_x)) % 360.0
+                    if distance_error > CENTER_TARGET_RADIUS:
+                        theta = max(theta, MIN_CENTERING_TILT)
 
                 try:
                     target_servo_angles = platform_to_servo_angles(model, home_joint_angles, theta, phi)
@@ -261,7 +272,7 @@ def main():
                 pid_y.reset()
                 current_servo_angles = set_all_servos(pca, home_servo_angles)
 
-            display = draw_overlay(frame, target, ball, error_x, error_y, theta, phi, current_servo_angles)
+            display = draw_overlay(frame, target, ball, error_x, error_y, distance_error, theta, phi, current_servo_angles)
             cv2.imshow("Smart Ball Balancer", display)
             if SHOW_MASK_WINDOW:
                 cv2.imshow("Teal Ball Mask", mask)
