@@ -13,9 +13,9 @@ class Camera:
         config = self.picam2.create_preview_configuration(main={"size": resolution, "format": format}, controls={"FrameDurationLimits": (8333, 8333)})
         self.picam2.configure(config)
 
-        self.lower_black = np.array([0, 0, 0])
-        self.upper_black = np.array([180, 255, 50])
-        self.gray_threshold = 60
+        # Yellow color range in HSV
+        self.lower_yellow = np.array([20, 100, 100])
+        self.upper_yellow = np.array([35, 255, 255])
 
         self.queue = deque(maxlen=16)
         self.queue.append((100, 75))  
@@ -54,12 +54,8 @@ class Camera:
         
         # Convert from BGR to HSV.
         frame_hsv = cv2.cvtColor(frame_blurred, cv2.COLOR_BGR2HSV)
-        frame_gray = cv2.cvtColor(frame_blurred, cv2.COLOR_BGR2GRAY)
-
-        #Filter based on Darkness + HSV
-        mask_hsv = cv2.inRange(frame_hsv, self.lower_black, self.upper_black)
-        mask_gray = cv2.threshold(frame_gray, self.gray_threshold, 255, cv2.THRESH_BINARY_INV)[1]
-        mask_combined = cv2.bitwise_or(mask_hsv, mask_gray)
+        # Filter based on yellow color
+        mask_combined = cv2.inRange(frame_hsv, self.lower_yellow, self.upper_yellow)
 
         #Process Edges
         mask_eroded = cv2.erode(mask_combined, None, iterations=1)

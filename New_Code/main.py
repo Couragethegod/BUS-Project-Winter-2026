@@ -38,15 +38,15 @@ PLATFORM_HEIGHT = 8.26
 MAX_TILT = 10.0
 POSITION_DEADBAND = 3.0
 BALL_LOST_TIMEOUT = 0.35
-TILT_RESPONSE_GAIN = 1.8
+TILT_RESPONSE_GAIN = 1.2
 
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
 
-TEAL_LOWER = np.array([90, 100, 100], dtype=np.uint8)
-TEAL_UPPER = np.array([110, 255, 255], dtype=np.uint8)
-MIN_BALL_AREA = 3
-MIN_BALL_RADIUS = 1
+TEAL_LOWER = np.array([80, 60, 60], dtype=np.uint8)
+TEAL_UPPER = np.array([120, 255, 255], dtype=np.uint8)
+MIN_BALL_AREA = 40
+MIN_BALL_RADIUS = 4
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
 PID_KP = 0.05
@@ -63,7 +63,7 @@ def setup_camera():
     picam2 = Picamera2()
     config = picam2.create_video_configuration(
         main={"size": (FRAME_WIDTH, FRAME_HEIGHT), "format": "RGB888"},
-        controls={"FrameDurationLimits": (33333, 33333), "ExposureTime": 8000},
+        controls={"FrameDurationLimits": (33333, 33333), "ExposureTime": 12000},
     )
     picam2.configure(config)
     picam2.start()
@@ -103,12 +103,12 @@ def set_all_servos(pca, angles):
 
 
 def find_teal_ball(frame):
-    blurred = cv2.GaussianBlur(frame, (7, 7), 0)
+    blurred = cv2.GaussianBlur(frame, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
     mask = cv2.inRange(hsv, TEAL_LOWER, TEAL_UPPER)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, MASK_KERNEL, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, MASK_KERNEL, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, MASK_KERNEL, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, MASK_KERNEL, iterations=3)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
