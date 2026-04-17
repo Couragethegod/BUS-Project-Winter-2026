@@ -1,126 +1,170 @@
-import math
-import time
+#!/usr/bin/env python3
+"""
+Smart Ball Balancer Robot
+Raspberry Pi 4B · Pi Camera 2 · PCA9685 · 3x MG996R Servos
+"""
 
-import board
-import busio
 import cv2
 import numpy as np
+import time
+import math
 from adafruit_pca9685 import PCA9685
-from picamera2 import Picamera2
+from board import SCL, SDA
+import busio
 
-from PID import PIDcontroller
-from robot_kinematics import RobotKinematics
+# ── Config ─────────────────────────────────────────────────────────────────────
 
-W, H = 640, 480
-SAFE_MIN, SAFE_MAX = 45.0, 80.0
-HOME = [62.5, 62.5, 62.5]
-CHANNELS = [0, 1, 2]
-PULSE_MIN, PULSE_MAX = 500, 2500
-HEIGHT, MAX_TILT = 8.26, 6.0
-ARM_GAIN = 1.6
-LOWER = np.array([90, 100, 100], dtype=np.uint8)
-UPPER = np.array([110, 255, 255], dtype=np.uint8)
-FILTER = 0.25
-SIGN_X, SIGN_Y = 1.0, 1.0
+SERVO_CHANNELS  = [0, 2, 1]
+SERVO_FREQ      = 50          # Hz
 
+ANGLE_MIN = 45.0
+ANGLE_MAX = 80.0
+ANGLE_MID = (ANGLE_MIN + ANGLE_MAX) / 2.0   # 62.5° = flat
 
-def clamp(x, a, b):
-    return max(a, min(b, x))
+PULSE_MIN_US = 500    # µs → 0°
+PULSE_MAX_US = 2500   # µs → 360°
 
+FRAME_W, FRAME_H = 640, 480
+CX, CY = FRAME_W // 2, FRAME_H // 2
 
-def set_servo(pca, ch, angle):
-    angle = clamp(angle, SAFE_MIN, SAFE_MAX)
-    pulse = PULSE_MIN + (angle / 180.0) * (PULSE_MAX - PULSE_MIN)
-    pca.channels[ch].duty_cycle = int((pulse / 20000.0) * 65535.0)
-    return angle
+# Teal ball HSV range
+TEAL_LO = np.array([90,  100,  100])
+TEAL_HI = np.array([100, 255, 255])
 
+# PID gains — tune KP first, then KD
+KP, KI, KD = 0.04, 0.0005, 0.018
 
-def set_all(pca, angles):
-    return tuple(set_servo(pca, ch, ang) for ch, ang in zip(CHANNELS, angles))
+# Leg azimuths: 3 servos spaced 120° apart
+LEG_PHI = [math.radians(a) for a in (0, 120, 240)]
 
+# ── Servo helpers ───────────────────────────────────────────────────────────────
 
-def find_ball(frame):
-    hsv = cv2.cvtColor(cv2.GaussianBlur(frame, (7, 7), 0), cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, LOWER, UPPER)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((5, 5), np.uint8))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
+def angle_to_pwm(deg):
+    deg   = float(np.clip(deg, ANGLE_MIN, ANGLE_MAX))
+    us    = PULSE_MIN_US + (deg / 360.0) * (PULSE_MAX_US - PULSE_MIN_US)
+    count = int((us / 20000.0) * 4096)   # 50 Hz → 20 ms period
+    return int(np.clip(count, 0, 4095)) << 4   # 12-bit → 16-bit
+
+def set_servos(pca, angles):
+    for ch, ang in zip(SERVO_CHANNELS, angles):
+        pca.channels[ch].duty_cycle = angle_to_pwm(ang)
+
+# ── Inverse kinematics ──────────────────────────────────────────────────────────
+
+def ik(tilt_x, tilt_y):
+    """Map tilt command (–1…+1) to 3 servo angles within safe range."""
+    half = (ANGLE_MAX - ANGLE_MIN) / 2.0
+    return [
+        float(np.clip(ANGLE_MID + (tilt_x * math.cos(p) + tilt_y * math.sin(p)) * half,
+                      ANGLE_MIN, ANGLE_MAX))
+        for p in LEG_PHI
+    ]
+
+# ── PID ─────────────────────────────────────────────────────────────────────────
+
+class PID2D:
+    def __init__(self, kp, ki, kd):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.integral   = np.zeros(2)
+        self.prev_error = np.zeros(2)
+        self.prev_t     = time.time()
+
+    def reset(self):
+        self.integral[:] = 0; self.prev_error[:] = 0
+
+    def update(self, error):
+        now = time.time(); dt = max(now - self.prev_t, 1e-4)
+        self.integral  += error * dt
+        deriv           = (error - self.prev_error) / dt
+        out             = self.kp * error + self.ki * self.integral + self.kd * deriv
+        self.prev_error = error.copy(); self.prev_t = now
+        return np.clip(out, -1.0, 1.0)
+
+# ── Ball detection ──────────────────────────────────────────────────────────────
+
+def detect_ball(frame):
+    hsv  = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, TEAL_LO, TEAL_HI)
+    mask = cv2.erode(mask,  None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
         return None
-    c = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(c) < 50:
+    c = max(cnts, key=cv2.contourArea)
+    if cv2.contourArea(c) < 300:
         return None
     (x, y), r = cv2.minEnclosingCircle(c)
-    m = cv2.moments(c)
-    if r < 4:
-        return None
-    return (int(m["m10"] / m["m00"]) if m["m00"] else int(x), int(m["m01"] / m["m00"]) if m["m00"] else int(y), int(r))
+    return int(x), int(y), int(r)
 
+# ── Main ────────────────────────────────────────────────────────────────────────
 
 def main():
-    picam2 = Picamera2()
-    picam2.configure(picam2.create_video_configuration(main={"size": (W, H), "format": "RGB888"}))
-    picam2.start()
-    time.sleep(1)
+    i2c = busio.I2C(SCL, SDA)
+    pca = PCA9685(i2c)
+    pca.frequency = SERVO_FREQ
+    set_servos(pca, [ANGLE_MID] * 3)
+    time.sleep(0.5)
 
-    pca = PCA9685(busio.I2C(board.SCL, board.SDA))
-    pca.frequency = 50
+    pid = PID2D(KP, KI, KD)
+    cap = cv2.VideoCapture(0)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  FRAME_W)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
 
-    model = RobotKinematics()
-    model.solve_inverse_kinematics_spherical(0, 0, HEIGHT)
-    home_joints = model.joint_angles_deg()
-    angles = set_all(pca, HOME)
-    pid_x = PIDcontroller(0.04, 0.0008, 0.008, integral_limit=200, output_limit=MAX_TILT)
-    pid_y = PIDcontroller(0.04, 0.0008, 0.008, integral_limit=200, output_limit=MAX_TILT)
-    fx = fy = None
+    angles = [ANGLE_MID] * 3
+    t_prev = time.time()
 
     try:
         while True:
-            frame = cv2.flip(cv2.cvtColor(picam2.capture_array(), cv2.COLOR_RGB2BGR), -1)
-            ball = find_ball(frame)
-            cx, cy = W // 2, H // 2
-            ex = ey = theta = phi = 0.0
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            frame = cv2.flip(frame, -1)   # camera is upside-down underneath
+
+            ball = detect_ball(frame)
 
             if ball:
-                x, y, r = ball
-                fx = x if fx is None else FILTER * x + (1 - FILTER) * fx
-                fy = y if fy is None else FILTER * y + (1 - FILTER) * fy
-                ex, ey = cx - fx, cy - fy
-                tilt_x = SIGN_X * pid_x.update(ex)
-                tilt_y = SIGN_Y * pid_y.update(ey)
-                theta = min(math.hypot(tilt_x, tilt_y), MAX_TILT)
-                phi = math.degrees(math.atan2(tilt_y, tilt_x)) % 360 if theta else 0.0
-                try:
-                    model.solve_inverse_kinematics_spherical(theta, phi, HEIGHT)
-                    joints = model.joint_angles_deg()
-                    target = [HOME[i] + (joints[i] - home_joints[i]) * ARM_GAIN for i in range(3)]
-                    angles = set_all(pca, [0.35 * t + 0.65 * a for t, a in zip(target, angles)])
-                except ValueError:
-                    pid_x.reset()
-                    pid_y.reset()
-                    angles = set_all(pca, HOME)
-                cv2.circle(frame, (x, y), r, (0, 255, 0), 2)
-                cv2.line(frame, (cx, cy), (int(fx), int(fy)), (255, 255, 255), 2)
+                bx, by, br = ball
+                ex = (bx - CX) / CX
+                ey = (by - CY) / CY
+                tilt   = pid.update(np.array([ex, ey]))
+                angles = ik(tilt[0], tilt[1])
+
+                # Draw ball circle + line to centre
+                cv2.circle(frame, (bx, by), br, (0, 220, 160), 2)
+                cv2.circle(frame, (bx, by),  4, (0, 255, 200), -1)
+                cv2.line(frame,   (bx, by), (CX, CY), (0, 200, 255), 1)
             else:
-                fx = fy = None
-                pid_x.reset()
-                pid_y.reset()
-                angles = set_all(pca, [0.2 * h + 0.8 * a for h, a in zip(HOME, angles)])
+                pid.reset()
+                angles = [ANGLE_MID] * 3
 
-            cv2.drawMarker(frame, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 20, 2)
-            cv2.putText(frame, f"err=({ex:.1f},{ey:.1f}) tilt={theta:.2f}", (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"servos={angles[0]:.1f},{angles[1]:.1f},{angles[2]:.1f}", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            set_servos(pca, angles)
+
+            # Centre crosshair
+            cv2.drawMarker(frame, (CX, CY), (255, 255, 255),
+                           cv2.MARKER_CROSS, 16, 1)
+
+            # FPS & servo readout
+            now = time.time()
+            fps = 1.0 / max(now - t_prev, 1e-4); t_prev = now
+            cv2.putText(frame, f"FPS {fps:.0f}", (8, 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (180, 255, 220), 1)
+            cv2.putText(frame,
+                        f"S0:{angles[0]:.1f}  S1:{angles[1]:.1f}  S2:{angles[2]:.1f}",
+                        (8, FRAME_H - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 220, 255), 1)
+
             cv2.imshow("Ball Balancer", frame)
-            if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
-    finally:
-        set_all(pca, HOME)
-        time.sleep(0.3)
-        picam2.stop()
-        picam2.close()
-        pca.deinit()
-        cv2.destroyAllWindows()
 
+    except KeyboardInterrupt:
+        pass
+    finally:
+        set_servos(pca, [ANGLE_MID] * 3)
+        cap.release()
+        cv2.destroyAllWindows()
+        pca.deinit()
 
 if __name__ == "__main__":
     main()
