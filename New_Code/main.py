@@ -24,7 +24,7 @@ CAMERA_FLIP = -1
 SHOW_MASK_WINDOW = True
 
 SERVO_CHANNELS = [0, 2, 1]
-SERVO_CENTER_ANGLES = [62.0, 62.5, 62.5]
+SERVO_CENTER_ANGLES = [62.5, 62.5, 62.5]
 SERVO_DIRECTIONS = [1.0, 1.0, 1.0]
 SERVO_TRIMS = [0.0, 0.0, 0.0]
 
@@ -43,14 +43,14 @@ TILT_RESPONSE_GAIN = 1.2
 CONTROL_SIGN_X = 1.0
 CONTROL_SIGN_Y = 1.0
 
-TEAL_LOWER = np.array([80, 60, 60], dtype=np.uint8)
-TEAL_UPPER = np.array([120, 255, 255], dtype=np.uint8)
+TEAL_LOWER = np.array([90, 100, 100], dtype=np.uint8)
+TEAL_UPPER = np.array([110, 255, 255], dtype=np.uint8)
 MIN_BALL_AREA = 40
 MIN_BALL_RADIUS = 4
 MASK_KERNEL = np.ones((5, 5), dtype=np.uint8)
 
 PID_KP = 0.05
-PID_KI = 0.0014
+PID_KI = 0.0001
 PID_KD = 0.035
 PID_INTEGRAL_LIMIT = 300.0
 
