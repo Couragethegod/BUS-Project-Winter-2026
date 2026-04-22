@@ -4,6 +4,9 @@ import time
 from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
 
+
+time.sleep(5)
+
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
