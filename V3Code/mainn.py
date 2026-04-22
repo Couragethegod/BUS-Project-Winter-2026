@@ -15,18 +15,6 @@ SERVO_NEUTRAL = 60
 def clamp(val):
     return max(SERVO_MIN, min(SERVO_MAX, val))
 
-
-# move smoothly to neutral (60) at startup
-TARGET = 60
-
-for step in range(30):
-    for i in SERVO_IDS:
-        current = kit.servo[i].angle or TARGET
-        kit.servo[i].angle = current + (TARGET - current) * 0.1
-    time.sleep(0.02)
-
-time.sleep(0.5)
-
 # ------------------ PID ------------------
 class PID:
     def __init__(self, kp, ki, kd):
@@ -158,7 +146,7 @@ while True:
         for angle in range(60, 34, -1):
             for i in SERVO_IDS:
                 kit.servo[i].angle = angle
-            time.sleep(0.02)
+            time.sleep(0.04)
 
         # cut power
         for i in SERVO_IDS:
