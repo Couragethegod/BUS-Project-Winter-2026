@@ -4,9 +4,6 @@ import time
 from picamera2 import Picamera2
 from adafruit_servokit import ServoKit
 
-
-time.sleep(5)
-
 # ------------------ SERVO SETUP ------------------
 kit = ServoKit(channels=16)
 
@@ -33,8 +30,8 @@ class PID:
         self.prev_error = error
         return self.kp * error + self.ki * self.integral + self.kd * derivative
 
-pid_x = PID(0.03, 0.003, 0.02)
-pid_y = PID(0.03, 0.003, 0.02)
+pid_x = PID(0.035, 0.0002, 0.025)
+pid_y = PID(0.035, 0.0002, 0.025)
 
 # ------------------ INVERSE KINEMATICS ------------------
 def platform_to_servos(tx, ty):
