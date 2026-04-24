@@ -56,6 +56,9 @@ class PID:
         # Final PID output = weighted sum of all components.
         return self.kp * error + self.ki * self.integral + self.kd * derivative
 
+
+# Create two independent PID controllers:
+# One for X-axis tilt and one for Y-axis tilt.
 pid_x = PID(0.035, 0.0002, 0.025)
 pid_y = PID(0.035, 0.0002, 0.025)
 
